@@ -1,0 +1,331 @@
+---
+title: "Untitled"
+author: "Yingjie"
+date: "5/4/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+# Packages
+```{r packages}
+# packages ----------------------------------------------------------------
+library(rnaturalearthdata)
+library(rnaturalearth)
+library(sp)
+library(sf)
+# install.packages("extrafont")
+library(extrafont)
+```
+
+
+```{r font}
+# theme, font: refer to the setting in the main code .Rmd
+# font <- "Arial" ## "Times" 
+# font      <- 'sans' ## = "TT Arial"
+# font_size <- 6 ## max = 7; min = 5 for Nature Sustainability
+# windowsFonts()
+# library(extrafont)
+# font_import(pattern = 'Arial')
+# loadfonts(device = "win")
+
+map_theme <- ggpubr::theme_transparent()+
+  theme(axis.title.x=element_blank(),
+                 axis.title.y=element_blank(),
+                 axis.text.x=element_blank(),
+                 axis.ticks = element_blank(),
+                 panel.grid.major = element_blank(),
+                 panel.grid.minor = element_blank(),
+                 panel.border = element_blank(),
+                 legend.position = c(0.09, 0.38),
+                 legend.key.size = unit(0.2, "cm"),
+                 # legend.key = element_rect(fill = "transparent", colour = "transparent"), 
+                 legend.key = element_rect(fill = NA, colour = NA, size = 0.25),
+                 
+                 # legend.box.background = element_blank(),
+                 # legend.background = element_rect(color = NA),
+                 # legend.background = element_blank(), 
+                 
+                 panel.background = element_rect(fill = "transparent", colour = NA),
+                 plot.background = element_rect(fill = "transparent", colour = NA),
+                 legend.background = element_rect(fill = "transparent", colour = NA),
+                 legend.box.background = element_rect(fill = "transparent", colour = NA),
+                 
+                 text=element_text(family=font, size=font_size))
+  
+```
+
+
+
+# Plot Function
+```{r}
+function_map_fig1 <- function(data, var, brks, lables, colors, legend.title){
+  
+  p <- ggplot(data = data) + 
+     geom_sf(aes(fill = var), color='gray50', size=0.01) + theme_bw() + 
+     
+     # scale_fill_gradientn(colors=colors,
+     #                      breaks=brks,
+     #                      labels=labels,
+     #                      # limits=c(df_min,df_max),
+     #                      na.value ='gray70') +
+     
+     scale_fill_manual(values = colors, 
+                       # breaks = breaks,
+                       labels = labels) +
+     guides(fill = guide_legend(label.hjust = 0, label = T, 
+                                reverse = T, title = legend.title))+
+     map_theme
+  
+  # return(p)
+  ## save plot as jpg
+  # pname <- paste0(dir.fig, '/map_', filename, '.jpg')
+  # ggsave(filename = pname, plot = p, width = 6, height = 5, units = 'in', dpi = 300)
+  # return(p)
+  
+}
+
+# ref: https://www.r-spatial.org/r/2018/10/25/ggplot2-sf-3.html
+```
+
+
+## fig_1b
+```{r}
+# load data
+getwd()
+rdata.ls <- list.files(path = './', pattern = '^shp_dt_2020.*.RData$'); rdata.ls; length(rdata.ls)
+rdata <- rdata.ls[length(rdata.ls)]; rdata
+load(paste0(wdir, '/', rdata))
+
+
+# fig_1b ------------------------------------------------------------------
+legend.title = 'Score'
+data <- shp_dt
+var <- data$rel_c
+
+library(classInt)
+min <- floor(min(var, na.rm = T)/5.0)*5;   min
+max <- ceiling(max(var, na.rm = T)/5.0)*5; max 
+
+### we plan to have 9 breaks, 8 labels, 8 colors
+breaks <- seq(min, max, 5); breaks; length(breaks) ## we plan to have 9 breaks, if bigger, reduce the number
+# colors <- col5; length(colors)
+# breaks <- breaks[-c(length(breaks)-1)]; breaks; length(breaks) ## modify the breaks
+
+is <- seq(1,length(breaks)-1, 1); is
+# is <- seq(1,length(breaks), 1); is
+labels <- c()
+for (i in is) {
+  # print(breaks[i])
+  bk <- paste0(breaks[i], ' – ', breaks[i+1]); print(bk)
+  labels <- c(labels, bk)
+}
+labels
+breaks
+length(breaks)
+length(labels)
+
+### create colors
+colors <- c(
+  ## greens: https://colorbrewer2.org/#type=sequential&scheme=YlGn&n=9
+  '#ffffe5',
+  # '#f7fcb9',
+  '#d9f0a3',
+  '#addd8e',
+  '#78c679',
+  '#41ab5d',
+  '#238443',
+  '#006837',
+  '#004529'
+)
+
+# colors <- colors[length(colors):1] # reorder colors
+colors
+
+length(breaks)
+length(labels)
+length(colors)
+
+### 
+data$brks <- cut(var, breaks=breaks, labels=labels)
+levels(data$brks)
+str(data$brks)
+head(data)
+# fig1b <- function_map_fig1(data = data, var=data$brks, brks=breaks, lables = lables, colors = colors, legend.title = legend.title)
+
+fig1b <- ggplot(data = data) + 
+     geom_sf(aes(fill = brks), color='gray50', size=0.01) + theme_bw() + 
+     scale_fill_manual(values = colors, 
+                       labels = labels) +
+     guides(fill = guide_legend(label.hjust = 0, label = T, 
+                                reverse = T, title = legend.title))+
+     map_theme
+# fig1b
+
+# fname <- paste0(dir.fig, '/Fig_1bcd.pdf'); fname
+# ggsave(fname, fig1b, width = 18, height = 9, units = 'cm', limitsize = FALSE, 
+#        bg = "transparent")
+```
+
+
+## fig_1c
+```{r}
+# fig_1c ------------------------------------------------------------------
+legend.title <- 'Score\nchange'
+var <- data$rel_not_chg
+
+library(classInt)
+# intv <- classIntervals(data$rel_not_chg, n = 6, style = 'equal'); intv#can use "jenks" but is very slow
+# intv$brks
+### create breaks
+min <- floor(min(var,   na.rm = T)/5.0)*5; min
+max <- ceiling(max(var, na.rm = T)/5.0)*5; max 
+breaks <- seq(min, max, 5); breaks
+# breaks <- breaks[c(1:6, 10)];  breaks ## modify the breaks
+breaks <- breaks[-c(length(breaks)-1)]; breaks; length(breaks) ## modify the breaks
+
+
+### create labels
+is <- seq(1,length(breaks)-1, 1); is
+labels <- c()
+for (i in is) {
+  # print(breaks[i])
+  bk <- paste0(breaks[i], ' – ', breaks[i+1]); print(bk)
+  labels <- c(labels, bk)
+}
+labels
+breaks
+
+### process data for plot
+data$brks <- cut(data$rel_not_chg, breaks=breaks, labels=labels)
+
+
+### create colors
+colors <- c(
+  ## brown
+  '#feb24c',
+  '#ffeda0',
+  
+  ## blues
+  '#eff3ff',
+  '#c6dbef',
+  # '#9ecae1',
+  '#6baed6',
+  '#4292c6',
+  '#2171b5',
+  '#084594'
+)
+
+length(breaks)
+length(labels)
+length(colors)
+
+### plot
+# fig1c <- function_map_fig1(data = data, var=data$brks, brks=breaks, 
+#                            lables=lables, colors = colors, legend.title)
+fig1c <- ggplot(data = data) + 
+     geom_sf(aes(fill = brks), color='gray50', size=0.01) + theme_bw() + 
+     scale_fill_manual(values = colors, 
+                       labels = labels) +
+     guides(fill = guide_legend(label.hjust = 0, label = T, 
+                                reverse = T, title = legend.title))+
+     map_theme
+# fig1c
+```
+
+
+## fig_1d
+```{r}
+# fig_1d ------------------------------------------------------------------
+
+legend.title = 'Number of\nincreased targets'
+data <- shp_dt
+var <- data$num
+
+# num_sdgs <- 7  ### Goal level
+max(data$num)
+max(data$num_)
+
+num_sdgs <- 9  ### Target level
+data$brks <- as.factor(data$num); levels(data$brks)
+# breaks <- seq(0,num_sdgs,1); breaks
+breaks <- sort(unique(data$num)); breaks; 
+labels <- breaks
+
+length(levels(data$brks))
+print(paste0('number of breaks: ', length(breaks)))
+print(paste0('number of labels: ', length(labels)))
+
+library(RColorBrewer)
+
+plotvar <- var
+nclr <- num_sdgs + 1; nclr
+clr <- brewer.pal(8,"Blues")
+plotclr <- colorRampPalette(clr)(nclr)
+
+# plotclr <- plotclr[nclr:1] # reorder colors
+class <- classIntervals(plotvar, nclr, style="equal") ## ignore the warnings
+colcode <- findColours(class, plotclr)
+colors <- attr(colcode, "palette"); colors
+print(paste0('number of colors: ', length(colors)))
+
+fig1d <- function_map_fig1(data, var=data$brks, brks=breaks, lables=lables, colors = colors, legend.title)
+fig1d
+```
+
+
+
+## fig_1e
+```{r}
+# fig_1d2 -----------------------------------------------------------------
+legend.title = 'Number of\ndecreased targets'
+data <- shp_dt
+var <- data$num_
+
+data$brks <- as.factor(data$num_)
+# breaks <- seq(0,num_sdgs,1);      breaks; length(breaks)
+breaks <- sort(unique(data$num_)); breaks; length(breaks)
+data$brks <- as.factor(data$num_); levels(data$brks); length(levels(data$brks))
+labels <- breaks
+
+
+print(paste0('number of breaks: ', length(breaks)))
+print(paste0('number of labels: ', length(labels)))
+
+
+library(RColorBrewer)
+
+plotvar <- var
+nclr <- num_sdgs + 1
+clr <- brewer.pal(8,"Oranges")
+plotclr <- colorRampPalette(clr)(nclr)
+# plotclr <- plotclr[nclr:1] # reorder colors
+class <- classIntervals(plotvar, nclr, style="equal")
+colcode <- findColours(class, plotclr)
+colors <- attr(colcode, "palette"); colors
+print(paste0('number of colors: ', length(colors)))
+
+fig1d2 <- function_map_fig1(data, var=data$brks, brks=breaks, 
+                            lables = lables, colors = colors, legend.title)
+# fig1d2
+```
+
+
+
+## fig 4 in 1
+```{r}
+# in one ------------------------------------------------------------------
+library(ggpubr)
+
+fig1bcd <- ggarrange(
+  fig1b, fig1d, fig1c, fig1d2,
+  nrow = 2, ncol = 2, labels = c('b', 'd', 'c', 'e'),
+  font.label = list(size = 7), align = 'v', common.legend = F) 
+
+
+fname <- paste0(dir.fig, '/Fig_1bcd.pdf'); fname
+# ggsave(fname, fig1bcd, width = 18, height = 9, units = 'cm', limitsize = FALSE, bg = "transparent")
+
+```
+

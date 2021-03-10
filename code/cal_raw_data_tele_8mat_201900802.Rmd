@@ -1,0 +1,661 @@
+---
+title: "Untitled"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# WD and packages
+```{r}
+# To clear your environment 
+remove(list = ls())
+
+# To clear your environment 
+remove(list = ls())
+
+### set work dir
+path <- rstudioapi::getSourceEditorContext()$path
+dir  <- dirname(rstudioapi::getSourceEditorContext()$path); dir
+setwd(dir)
+setwd('..') # set directory by one folder up
+getwd()
+dir.root <- getwd()
+
+
+wd <- './data/update_0503_SUM_dist'; wd
+getwd()
+setwd(wd)
+dir.figures <- paste0(dir.root, '/', 'Figures'); dir.figures
+dir.output  <- './_output_score';                dir.output
+
+
+
+
+library(readxl)
+library(XLConnect)
+library(xlsx)
+library(tidyverse)
+library(reshape2) # expand long table to wide one
+
+
+# df.xlsx <- "0_capital.xlsx"
+# df.xlsx <- "6_wat.xlsx";          SDG <- 'SDG6'
+# df.xlsx <- "7_ene.xlsx";          SDG <- 'SDG7'
+df.xlsx <- "8_mat.xlsx";          SDG <- 'SDG8'; 
+# df.xlsx <- "9_co2.xlsx";          SDG <- 'SDG9'
+# df.xlsx <- "12_mat-perCap.xlsx";  SDG <- 'SDG12'
+# df.xlsx <- "13_co2-forest.xlsx";  SDG <- 'SDG13'
+# df.xlsx <- "15_for.xlsx";         SDG <- 'SDG15'
+
+```
+
+
+
+
+# Data
+## Read in from excel
+
+```{r}
+
+# functions 
+Net_Import_Cal <- function(df.xlsx, matrix) {
+  # trade matrix
+  s1 <- read_excel(df.xlsx, sheet = 1, col_names = T, range = "B1:AP616")
+  s2 <- matrix
+  
+  # nearby trade matrix
+  s3 <- s1 * s2
+  
+  # add country name as a new col
+  countries <- colnames(s2[1:41])
+  colnames(s3) <- countries; length(countries)
+  
+  # add year seq to data frame 
+  year_seq <- rep(seq(1995, 2009, by=1), each = 41)
+  s3$year  <- year_seq
+  
+  # total nearby imports
+  s4 <- s3 %>% group_by(year) %>% summarise_all(funs(sum))
+  
+  # tanspose data frame and keep the first col as new header
+  s5 <- as.data.frame(t(s4[,-1]))
+  colnames(s5) <- seq(1995, 2009, by=1)
+  s5 <- s5[ order(row.names(s5)), ]
+  
+  # total nearby exports
+  library("reshape2") # expand long table to wide one
+  s6 <- s3 %>%
+    mutate(row.sum   = rowSums(s3[,1:41]),
+           year      = year_seq,
+           countries = rep(countries, times = 15)) %>% # times=15, each = 15
+    dcast(countries ~ year, value.var = 'row.sum') # year as new col names
+  s6 <- data.frame(s6[,-1], row.names=s6[,1])
+  s6 <- s6[ order(row.names(s6)), ]
+  
+  # net nearby imports
+  s7 <- s5 - s6
+}
+
+# load spatial relation matrix: nearby or distant
+ner_dst_matrix <- "./_input_data/_adjancet_distant_matrix.xlsx"
+ner.matrix <- read_excel(ner_dst_matrix, sheet= 'S2.country_nearby',  col_names = T, range = "B1:AP616")
+dst.matrix <- read_excel(ner_dst_matrix, sheet= 'S2.country_distant', col_names = T, range = "B1:AP616")
+not.matrix <- read_excel(ner_dst_matrix, sheet= 'S2.country_not',     col_names = T, range = "B1:AP616") 
+
+
+### cal using function
+matrix <- ner.matrix ## nearby trade
+s7.ner <- Net_Import_Cal(df.xlsx, matrix)
+
+matrix <- dst.matrix ## distant trade
+s7.dst <- Net_Import_Cal(df.xlsx, matrix)
+
+matrix <- not.matrix ## no trade
+s7.not <- Net_Import_Cal(df.xlsx, matrix)
+```
+
+
+
+## Indicator calculation
+
+### 8.4.2.1 MC/GDP
+
+  8.4.2 (2) Domestic material consumption per GDP (low material intensity indicates high SDG score)
+  
+```{r}
+indicator1 <- 'Indicator 8.4.2.1' 
+
+### Material consumption (1000 tonnes)
+### This data is from WIOD-Environmental_Accounts 
+loc <- read_excel(df.xlsx,sheet = 7, col_names = T, range = ("A1:P42")) %>% as.data.frame() 
+# first col as row name
+loc <- data.frame(loc[,-1], row.names=loc[,1])
+loc <- loc[ order(row.names(loc)), ]
+
+
+### GDP data (US $)
+### (1) the current approach ------------------------------------------------- #
+getwd()
+GDP_c_csv <- './_input_data/_GDP_c_0_capital.csv'
+GDP_c     <- read.csv(file = GDP_c_csv, header = T, stringsAsFactors = F)
+GDP_c_rel <- GDP_c %>% filter(scenario == 'rel_c') %>% dplyr::select(-1, -17) ## remove country name info and scenario col
+GDP_c_not <- GDP_c %>% filter(scenario == 'not_c') %>% dplyr::select(-1, -17)
+GDP_c_ner <- GDP_c %>% filter(scenario == 'ner_c') %>% dplyr::select(-1, -17)
+GDP_c_dst <- GDP_c %>% filter(scenario == 'dst_c') %>% dplyr::select(-1, -17)
+
+### (2) a baseline appraoch suggested by one reviewer ------------------------ #
+# GDP_b_csv <- './_input_data/_GDP_b_0_capital.csv'
+# GDP_b     <- read.csv(file = GDP_b_csv, header = T, stringsAsFactors = F)
+# GDP_b_rel <- GDP_b %>% filter(scenario == 'rel_b') %>% dplyr::select(-1, -17)
+# GDP_b_not <- GDP_b %>% filter(scenario == 'not_b') %>% dplyr::select(-1, -17)
+# GDP_b_ner <- GDP_b %>% filter(scenario == 'ner_b') %>% dplyr::select(-1, -17)
+# GDP_b_dst <- GDP_b %>% filter(scenario == 'dst_b') %>% dplyr::select(-1, -17)
+### -------------------------------------------------------------------------- #
+
+
+### Cal mc/GDP 
+df_rel_c <- (loc[, -16] + 0     )/GDP_c_rel  ## Domestic material consumption / GDP
+df_not_c <- (loc[, -16] + s7.not)/GDP_c_not  ## No-trade: (M - net exports)/GDP, which is equal to (M + net imports)/GDP
+df_ner_c <- (loc[, -16] + s7.dst)/GDP_c_ner  ## only  nearby trade scenario; means additional burden from distant trade
+df_dst_c <- (loc[, -16] + s7.ner)/GDP_c_dst  ## only distant trade scenario
+
+
+### normalization using the function - Func_norm_sdg_score
+## load the function
+source(paste0(dir, "/Func_norm_sdg_score_good_bad.R"))
+
+score_c1 <- Func_norm_sdg_score_bad(df_rel_c, df_not_c, df_ner_c, df_dst_c,
+                                    bottom = 0.025, top = 0.975)
+## look at the data distribution
+score_c1_long <- score_c1 %>% gather(year, value, 2:16)
+
+ggplot(score_c1_long, aes(x = value)) +
+  geom_histogram() +
+  facet_wrap(~scenario) +
+  theme_bw() +
+  ggtitle(indicator1)
+
+```
+
+
+
+### 8.4.2.2 MC/POP
+
+  8.4.2 (1) Domestic material consumption per capita
+
+```{r}
+indicator2 <- 'Indicator 8.4.2.2'
+
+### Material consumption (1000 tonnes)
+loc <- loc
+
+### POP
+getwd()
+pop <- read.csv(file = './_input_data/_pop_worldbank_19952009.csv', header = T, stringsAsFactors = F)
+pop <- as.data.frame(pop)
+pop <- data.frame(pop[,-1], row.names=pop[,1])
+pop <- pop[ order(row.names(pop)), ]
+
+### Cal MC/POP
+df_rel_c <- (loc + 0     )*10^6/pop
+df_not_c <- (loc + s7.not)*10^6/pop
+df_ner_c <- (loc + s7.dst)*10^6/pop
+df_dst_c <- (loc + s7.ner)*10^6/pop
+
+
+### normalization using the function - Func_norm_sdg_score
+## load the function
+source(paste0(dir, "/Func_norm_sdg_score_good_bad.R"))
+
+score_c2 <- Func_norm_sdg_score_bad(df_rel_c, df_not_c, df_ner_c, df_dst_c,
+                                    bottom = 0.025, top = 0.975)
+## look at the data distribution
+score_c2_long <- score_c2 %>% gather(key = year, value = value, 2:16)
+
+ggplot(score_c2_long, aes(x = value)) +
+  geom_histogram() +
+  facet_wrap(~scenario) +
+  theme_bw() +
+  ggtitle(indicator2)
+
+```
+
+
+
+### Comapre two indicators
+```{r}
+
+score_c1_long_rel <- score_c1 %>% filter(scenario=='rel_c') %>%
+  mutate(MeanScore = rowMeans(select(., `1995`:`2009`))) %>%
+  # arrange(rev(MeanScore)) %>%
+  mutate(colorID = rank(MeanScore)) %>%
+  gather(year, value, 2:16) %>%
+  dplyr::mutate(id = row_number())
+
+score_c2_long_rel <- score_c2 %>% filter(scenario=='rel_c') %>%
+  mutate(MeanScore = rowMeans(select(., `1995`:`2009`))) %>%
+  mutate(colorID = rank(MeanScore)) %>%
+  gather(year, value, 2:16)%>%
+  dplyr::mutate(id = row_number())
+
+
+score_c12_long_rel <- merge(x = score_c1_long_rel, y = score_c2_long_rel, by = 'id') %>%
+  gather(key = indicator, value = value, c(value.x, value.y))
+
+
+unique(score_c12_long_rel$indicator)
+label_names <- c(`value.x` = indicator1, `value.y` = indicator2)
+
+
+### plot - choose the one with greater varance as ordered plot
+ggplot(score_c12_long_rel,
+       aes(x = reorder(nation.x, colorID.x),
+           y = value,
+           color = as.factor(colorID.x))) +
+# ggplot(score_c12_long_rel, 
+#        aes(x = reorder(nation.y, colorID.y), 
+#            y = value, 
+#            color = as.factor(colorID.y))) + 
+  # geom_point() + 
+  geom_boxplot() +
+  theme_bw() +
+  # ggtitle('SDG 15') +
+  ylab('SDG score') +
+  xlab('Country') +
+  coord_flip() +
+  facet_wrap(~indicator, 
+             # scales = 'free_x', 
+             labeller = as_labeller(label_names))+
+  theme(legend.position="none")
+
+getwd()
+fname <- paste0(dir.figures, '/compare_2_indicators_', SDG, '-2020.png'); fname
+ggsave(filename = fname,  plot = last_plot(), width = 12, height = 6, units = "in", dpi = 500)
+
+```
+
+
+
+
+## Mean SDG score
+Take the mean of these two indicators
+```{r}
+SDG_score_c <- data.frame(score_c1[,1], 
+                          (score_c1[,2:16] + score_c2[,2:16])/2,  ### composite indicator score
+                          score_c1[,17:18]) %>% as.data.frame()
+names(SDG_score_c) <- c('nation', seq(1995, 2009), "scenario", "group")
+
+
+
+# save as csv for cal SDGc
+out.dir <- './_output_score'
+fname <- paste0(out.dir, '/score_c_', gsub('.xlsx', '', df.xlsx), '.csv'); fname
+write.csv(x = SDG_score_c, file = fname, row.names = T)
+```
+
+## Diff between dst and ner; by global/ group
+
+```{r}
+
+source(paste0(dir, "/single_diff_func_c_approach.R"))
+# source(paste0(dir, "/single_diff_func_b_approach.R"))
+ 
+single_diff_func_c(SDG_score_c)
+# single_diff_func_b(score_b)
+
+```
+
+
+
+
+
+# Data_Descriptive_Stats
+
+## data
+```{r}
+library(tidyverse)
+library(reshape2) # expand long table to wide one
+library(scales) # to access break formatting functions
+
+
+s1 <- read_excel(df.xlsx, sheet = 1, col_names = T, range = "B1:AP616")
+
+names(s1)
+s3 <- s1
+
+# add country name as a new col
+countries <- colnames(s1[1:41])
+colnames(s3) <- countries; length(countries)
+
+# add year seq to data frame 
+year_seq = rep(seq(1995, 2009, by=1), each = 41); year_seq
+s3$year <- year_seq
+
+### total imports
+s4 <- s3 %>% group_by(year) %>% summarise_all(funs(sum))
+s5 <- as.data.frame(t(s4[,-1])) ## tanspose data frame and keep the first col as new header
+colnames(s5) <- seq(1995, 2009, by=1)
+s5 <- s5[ order(row.names(s5)), ]
+
+### total  exports
+s6 <- s3 %>%
+  mutate(row.sum   = rowSums(s3[,1:41]),
+         year      = year_seq,
+         countries = rep(countries, times = 15)) %>% # times=15, each = 15
+  dcast(countries ~ year, value.var = 'row.sum')    # year as new col names
+s6 <- data.frame(s6[,-1], row.names=s6[,1])
+s6.1 <- s6[ order(row.names(s6)), ]
+
+
+### input data for plot
+ip <- s4[-1] %>% gather(key = 'nation', value = 'value') ## wide to long
+ep <- as.data.frame(t(s6)) %>% gather(key = 'nation', value = 'value')
+
+str(ip)
+
+ip.mean <- ip %>% group_by(nation) %>% dplyr::summarise(mean = mean(value))
+ip.new  <- merge(x = ip, y = ip.mean, by = 'nation', all.x = T)
+
+ip_ep <- rbind(
+  cbind(trade = 'imports', ip),
+  cbind(trade = 'exports', ep)
+)
+ip_ep.new  <- merge(x = ip_ep, y = ip.mean, by = 'nation', all.x = T)
+```
+
+
+## plot
+
+```{r}
+lab <- bquote('Virtual material consumption (1000 tonnes)')
+
+ggplot(data = ip_ep.new, aes(x = reorder(nation, mean), y = value, color = trade)) + ## log10(value)
+  # geom_point() + 
+  geom_boxplot() +
+  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
+                labels = trans_format("log10", math_format(10^.x))) +
+  theme_bw() +
+  # ggtitle('Indicator 15.2.1') +
+  # coord_flip() +
+  # theme(legend.position="none") +
+  # scale_color_hue(direction = -1) +
+  # scale_colour_brewer(direction = -1)+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3)) +
+  theme(legend.position = c(0.8, 0.2)) +
+  ylab(lab) +
+  xlab('Country')
+
+fname <- paste0(dir.figures, '/_Data_Descriptive_Stats_', SDG, '-2020.png'); fname
+ggsave(filename = fname, plot = last_plot(), width = 7, height = 5.5, units = "in", dpi = 500)
+
+```
+
+
+
+
+
+
+
+
+
+
+# ################################
+```{r}
+# find min and max for further normalization
+all_c <- as.data.frame(rbind(df_rel_c, df_not_c, df_ner_c, df_dst_c))
+str(all_c)
+
+library(ggplot2)
+library(tidyr)
+all_c.val <- gather(all_c, cols, value)
+ggplot(all_c.val, aes(x = value)) + geom_histogram(bins = 50)
+
+quantile(all_c.val$value, probs = c(0.05, 0.95))
+val.min <- quantile(all_c.val$value, probs = 0.05); val.min
+val.max <- quantile(all_c.val$value, probs = 0.95); val.max
+
+all_c.val <- all_c.val %>% filter(value >= val.min & value <= val.max)
+ggplot(all_c.val, aes(x = value)) + geom_histogram(bins = 50)
+
+
+#----- normalization use old data numbers ----- #
+# max <- read_excel(df.xlsx, sheet = 10, col_names = F, range = "B44") 
+# min <- read_excel(df.xlsx, sheet = 10, col_names = F, range = "B45") 
+# max <- (data.matrix(max))[1]; max
+# min <- (data.matrix(min))[1]; min
+#----- ---------------------------------------- #
+
+min <- val.min; min
+max <- val.max; max
+
+df_rel_c.norm <- df_rel_c
+df_not_c.norm <- df_not_c
+df_ner_c.norm <- df_ner_c
+df_dst_c.norm <- df_dst_c
+
+
+norm <- function(x){
+  ifelse(x > max, 0, 
+         ifelse(x>min, (x-max)/(min-max)*100, 100))
+}
+
+df_rel_c.norm[] <- lapply(df_rel_c.norm, norm)
+df_not_c.norm[] <- lapply(df_not_c.norm, norm)
+df_ner_c.norm[] <- lapply(df_ner_c.norm, norm)
+df_dst_c.norm[] <- lapply(df_dst_c.norm, norm)
+
+
+# add group code for developed or developing
+getwd()
+group.file <- './_input_data/_nearby_distant_developed_developing_20181110.xlsx'
+group.code <- read_excel(group.file, sheet = 'group', col_names = T, range = "A1:B42")
+group.code <- arrange(group.code, nation)
+
+Add_Nation <- function(f){
+  df_norm          <- f %>% as.data.frame() %>% mutate(nation   = rownames(df_rel_c))
+  df_norm$scenario <- paste0(substr(deparse(substitute(f)), 4, 8))
+  df_norm_nation   <- merge(x = df_norm, y = group.code, by.x = 'nation', by.y = 'nation')
+  # write to csv
+  # out.dir <- './_output_score'
+  # fname <- paste0(out.dir, '/score_', substr(deparse(substitute(f)), 4, 8), '.csv')
+  # # deparse(substitute(f)), covert dataframe name f to string 'f'
+  # print(fname)
+  # write.csv(x = df_norm_nation, file = fname, row.names = T)
+}
+
+
+score_c_rel <- Add_Nation(df_rel_c.norm)
+score_c_not <- Add_Nation(df_not_c.norm)
+score_c_ner <- Add_Nation(df_ner_c.norm)
+score_c_dst <- Add_Nation(df_dst_c.norm)
+
+score_c     <- rbind(score_c_rel, score_c_not, score_c_ner, score_c_dst)
+names(score_c)
+names(score_c) <- c('nation', seq(1995, 2009), "scenario", "group")
+# save csv
+# df.xlsx <- "6_wat.xlsx"
+out.dir <- './_output_score'
+fname <- paste0(out.dir, '/score_c_', gsub('.xlsx', '', df.xlsx), '.csv'); fname
+write.csv(x = score_c, file = fname, row.names = T)
+
+  
+
+# ####################################################################### #
+# ~~ 2) baseline approach 1 --------------------------------------------------
+# ####################################################################### #
+rep.row  <-function(x,n){matrix(rep(x,each=n),nrow=n)}
+rep.col  <-function(x,n){matrix(rep(x,each=n), ncol=n, byrow=TRUE)}
+loc_base <- as.data.frame(rep.col(loc[,1], 15)) # set the start year 1995 as base line
+
+
+# df_rel_b <- (loc_base + 0     )/GDP_b_rel; colnames(df_rel_b) <- colnames(df_rel_c)
+df_rel_b <- (loc[, -16] + 0     )/GDP_b_rel; colnames(df_rel_b) <- colnames(df_rel_c)
+df_not_b <- (loc_base   + s7.not)/GDP_b_not; colnames(df_not_b) <- colnames(df_rel_c)
+df_ner_b <- (loc_base   + s7.dst)/GDP_b_ner; colnames(df_ner_b) <- colnames(df_rel_c)
+df_dst_b <- (loc_base   + s7.ner)/GDP_b_dst; colnames(df_dst_b) <- colnames(df_rel_c)
+
+
+all_b     <- as.data.frame(rbind(df_rel_b, df_not_b, df_ner_b, df_dst_b))
+all_b.val <- gather(all_b, cols, value)
+min <- quantile(all_b.val$value, probs = 0.05); min
+max <- quantile(all_b.val$value, probs = 0.95); max
+
+df_rel_b.norm <- df_rel_b
+df_not_b.norm <- df_not_b
+df_ner_b.norm <- df_ner_b
+df_dst_b.norm <- df_dst_b
+
+df_rel_b.norm[] <- lapply(df_rel_b.norm, norm)
+df_not_b.norm[] <- lapply(df_not_b.norm, norm)
+df_ner_b.norm[] <- lapply(df_ner_b.norm, norm)
+df_dst_b.norm[] <- lapply(df_dst_b.norm, norm)
+
+score_b_rel <- Add_Nation(df_rel_b.norm)
+score_b_not <- Add_Nation(df_not_b.norm)
+score_b_ner <- Add_Nation(df_ner_b.norm)
+score_b_dst <- Add_Nation(df_dst_b.norm)
+
+# big table
+score_b     <- rbind(score_b_rel, score_b_not, score_b_ner, score_b_dst)
+
+names(score_b)
+names(score_b) <- c('nation', seq(1995, 2009), "scenario", "group")
+
+# save csv
+# df.xlsx <- "6_wat.xlsx"
+out.dir <- './_output_score'
+fname <- paste0(out.dir, '/score_b_', gsub('.xlsx', '', df.xlsx), '.csv'); fname
+write.csv(x = score_b, file = fname, row.names = T)
+
+
+
+
+
+# ####################################################################### #
+# ~~ 3) baseline approach 2 --------------------------------------------------
+# ####################################################################### #
+s7.not.base <- as.data.frame(rep.col(s7.not[,1], 15)) # set the start year 1995 as base line
+s7.dst.base <- as.data.frame(rep.col(s7.dst[,1], 15))
+s7.ner.base <- as.data.frame(rep.col(s7.ner[,1], 15))
+
+
+
+# df_rel_b <- (loc_base + 0     )/GDP_b_rel; colnames(df_rel_b) <- colnames(df_rel_c)
+df_rel_b <- (loc[, -16] + 0     )/GDP_b_rel; colnames(df_rel_b) <- colnames(df_rel_c)
+df_not_b <- (loc[, -16] + s7.not.base)/GDP_b_not; colnames(df_not_b) <- colnames(df_rel_c)
+df_ner_b <- (loc[, -16] + s7.dst.base)/GDP_b_ner; colnames(df_ner_b) <- colnames(df_rel_c)
+df_dst_b <- (loc[, -16] + s7.ner.base)/GDP_b_dst; colnames(df_dst_b) <- colnames(df_rel_c)
+
+
+all_b     <- as.data.frame(rbind(df_rel_b, df_not_b, df_ner_b, df_dst_b))
+all_b.val <- gather(all_b, cols, value)
+min <- quantile(all_b.val$value, probs = 0.05); min
+max <- quantile(all_b.val$value, probs = 0.95); max
+
+df_rel_b.norm <- df_rel_b
+df_not_b.norm <- df_not_b
+df_ner_b.norm <- df_ner_b
+df_dst_b.norm <- df_dst_b
+
+df_rel_b.norm[] <- lapply(df_rel_b.norm, norm)
+df_not_b.norm[] <- lapply(df_not_b.norm, norm)
+df_ner_b.norm[] <- lapply(df_ner_b.norm, norm)
+df_dst_b.norm[] <- lapply(df_dst_b.norm, norm)
+
+score_b_rel <- Add_Nation(df_rel_b.norm)
+score_b_not <- Add_Nation(df_not_b.norm)
+score_b_ner <- Add_Nation(df_ner_b.norm)
+score_b_dst <- Add_Nation(df_dst_b.norm)
+
+# big table
+score_b2     <- rbind(score_b_rel, score_b_not, score_b_ner, score_b_dst)
+
+names(score_b2)
+names(score_b2) <- c('nation', seq(1995, 2009), "scenario", "group")
+
+# save csv
+# df.xlsx <- "6_wat.xlsx"
+out.dir <- './_output_score'
+fname <- paste0(out.dir, '/score_b2_', gsub('.xlsx', '', df.xlsx), '.csv'); fname
+write.csv(x = score_b2, file = fname, row.names = T)
+
+
+
+
+
+
+
+# ########################################################################### #
+# diff between dst and ner; by global/ group
+# ########################################################################### #
+
+source("G:/My Drive/_paper/170923_trade_Global SDGs/results/single_diff_func_c_approach.R")
+single_diff_func_c(score_c)
+
+source("G:/My Drive/_paper/170923_trade_Global SDGs/results/single_diff_func_b_approach.R")
+single_diff_func_b(score_b)
+
+
+
+
+
+
+
+
+
+# ############################################################################################################# #
+# ############################################################################################################# #
+# ############################################################################################################# #
+# glo_ner <- df_ner.norm2 %>% summarise_at(.vars = names(.)[2:16], .funs = c(mean="mean"))
+# glo_dst <- df_dst.norm2 %>% summarise_at(.vars = names(.)[2:16], .funs = c(mean="mean"))
+# glo_ner <- cbind(class = 'glo_ner', glo_ner)
+# glo_dst <- cbind(class = 'glo_dst', glo_dst)
+# 
+# 
+# ded_ner <- df_ner.norm %>% group_by(class) %>% summarise_at(.vars = names(.)[1:15], .funs = c(mean="mean"))
+# ded_dst <- df_dst.norm %>% group_by(class) %>% summarise_at(.vars = names(.)[1:15], .funs = c(mean="mean"))
+# 
+# sdg_dst <- rbind(glo_ner, ded_ner)
+# sdg_ner <- rbind(glo_dst, ded_dst)
+# 
+# sdg_dif <- sdg_dst[, 2:16] - sdg_ner[, 2:16]
+# region <- c('glo', 'ding', 'ded')
+# SDG_class <- c(SDG, SDG, SDG)
+# sdg_dif <- cbind(SDG_class, region, sdg_dif)
+# 
+# 
+# 
+# # write to xlsx
+# file <- "sdg_diff_distant_nearby.xlsx"
+# wb <- loadWorkbook(file)
+# sheets <- getSheets(wb)
+# sheet <- sheets[[1]]  # or another
+# # write contents
+# addDataFrame(sdg_dif, sheet, col.names = T, row.names = T,
+#              startRow = 1, startColumn = 1)
+# # save to disk
+# saveWorkbook(wb, file)
+# 
+# # ---------------- output result ---------------
+# 
+# file = "_data_output.xlsx"
+# sheetName = SDG
+# wb <- loadWorkbook(file) # loadWorkbook(file, create = TRUE)
+# sheet <- createSheet(wb, SDG)
+# # here, you can set the startRow and startCol. Col A = 1, B = 2,...
+# addDataFrame(df_ner.norm, sheet=sheet, col.names = T, row.names=F,
+#              startRow = 1, startColumn = 1)
+# addDataFrame(df_dst.norm, sheet=sheet, col.names = T, row.names=F,
+#              startRow = 1, startColumn = 16)
+# saveWorkbook(wb, file)
+# 
+# 
+
+
+```
+

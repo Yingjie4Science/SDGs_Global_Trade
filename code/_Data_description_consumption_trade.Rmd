@@ -1,0 +1,257 @@
+---
+title: "data_description"
+author: "Yingjie"
+date: "February 24, 2019"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+# setup
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# To clear your environment 
+# remove(list = ls())
+
+# set work dir
+path <- rstudioapi::getSourceEditorContext()$path
+dir  <- dirname(rstudioapi::getSourceEditorContext()$path); dir
+setwd(dir); getwd()
+setwd("./update_0503_SUM_dist")
+
+library(readxl); 
+library(XLConnect); 
+library(xlsx)
+library(dplyr);  
+library(tidyverse)
+```
+
+
+# data input 
+```{r}
+
+# df.xlsx <- "0_capital.xlsx"
+
+# df.xlsx <- "6_wat.xlsx"; SDG <- 'Water consumption';  
+#    unit <- expression("10"^"3"* 'm'^"3"*'');          range = "R1:AI42"; f=1; ID = '(A)';
+# ylab <- bquote(.(labNames[1]) ~(1000~m^3)); 
+
+
+# df.xlsx <- "7_ene.xlsx";          SDG <- 'Energy use';
+#    unit <- 'TJ';                                      range = "A1:Q42";  f=1; ID = '(B)';
+# ylab <- bquote(paste(.(SDG)~(TJ))); print(ylab)
+
+
+# df.xlsx <- "8_mat.xlsx";          SDG <- 'Material consumption';
+#    unit <- expression("10"^"3"*' tonnes');            range = "A1:Q42";  f=1; ID = '(C)';
+# ylab <- bquote(paste(.(SDG)~(10^3~tonnes))); print(ylab)
+
+
+# df.xlsx <- "9_co2.xlsx";          SDG <- 'CO2 emission';
+#    unit <- expression("10"^"3"*' tonnes');            range = "U1:AK42"; f=1; ID = '(D)';
+# ylab <- bquote(paste(.(SDG) ~(10^3~tonnes))); print(ylab)
+
+
+df.xlsx <- "15_for.xlsx";         SDG <- 'Forest area';
+   unit <- expression("10"^"3"*' hectares');          range = "A1:Q42";  f=1; ID = '(E)';
+ylab <- bquote(paste(.(SDG) ~(10^3~hectares))); print(ylab)
+
+
+########################################################## #
+# df.xlsx <- "12_mat-perCap.xlsx";  SDG <- 'SDG12'; 
+#    unit <- expression("10"^"3"*' tonnes per capita'); range = "A1:Q42";  f=2; ID = '(E)';
+
+# df.xlsx <- "13_co2-forest.xlsx";  SDG <- 'SDG13'; 
+#    unit <- expression('GtCO2e/ha');                   range = "U1:AJ42"; f=3; ID = '(F)';
+
+
+### total resource comsumptions (local use + use trade part)
+loc <- read_excel(df.xlsx, sheet = 'S7.net_import_nearby', col_names = T, range = range) # 'S7.net_import_nearby'
+loc <- as.data.frame(loc[, -17]) 
+names(loc) <- c('Nation', seq(1995,2009, by=1))
+
+# labNames <- c(SDG, unit); labNames
+# ylab <- bquote(.(labNames[1]) ~(1000~m^3)); 
+# ylab <- bquote(.(labNames[1]) ~ .(labNames[2])); 
+# 
+# print(ylab)
+
+```
+
+
+## data value (choose one)
+### 1. the actual amount of resource consumption
+```{r }
+
+use <- loc[,1:16]
+names(use) <- c('Nation', seq(1995,2009,by=1))
+df <- use %>% gather(Year, Score, 2:16)
+df$Year <- as.numeric(df$Year)
+
+```
+
+
+### 2. SDG indicator value?
+```{r }
+
+### ----- other info -----
+
+# # population
+# pop <- read.csv(file = './_input_data/_pop_worldbank_19952009.csv', header = T, stringsAsFactors = F)
+# pop <- as.data.frame(pop)
+# names(pop) <- c('Nation', seq(1995,2009,by=1))
+# 
+# # land area
+# forestland <- read_excel('13_co2-forest.xlsx',sheet = 'forest_S', col_names = T, range = "A1:P42") 
+# forestland <- as.data.frame(forestland)
+# names(forestland) <- c('Nation', seq(1995,2009,by=1))
+# 
+# 
+# if (f<2) {
+#   use <- loc[,1:16]
+#   names(use) <- c('Nation', seq(1995,2009,by=1))
+#   df <- use %>% gather(Year, Score, 2:16)
+# } else if (f<3) {
+#   use1 <- use[order(use$Nation),]
+#   pop1 <- pop[order(pop$Nation),]
+#   df <- cbind(use1$Nation, (use1[,-1])*10^6/pop1[,-1])
+#   names(df) <- c('Nation', seq(1995,2009,by=1))
+#   df <- df %>% gather(Year, Score, 2:16)
+# } else {
+#   use <- loc[order(loc$Nation),]
+#   forestland1 <- forestland[order(forestland$Nation),]
+#   df <- cbind(use$Nation, (use[,-1])/forestland1[,-1]/100)
+#   names(df) <- c('Nation', seq(1995,2009,by=1))
+#   df <- df %>% gather(Year, Score, 2:16)
+# }
+# 
+# df$Year <- as.numeric(df$Year)
+
+```
+
+
+
+## plot
+
+### Resource consumption by year (boxplot)
+```{r}
+library(scales)
+
+
+
+### the data distribution of water consumption globally in each year
+p1_global_byYr <- 
+  ggplot(df, aes(x=Year, y=Score, group = Year)) + 
+  # geom_violin()
+  geom_boxplot() +
+  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
+                labels = trans_format("log10", math_format(10^.x))) +
+  # ylab(unit) +
+  ylab(ylab) +
+  # ggtitle(SDG) +
+  theme_bw()
+
+p1_global_byYr
+```
+
+
+
+### Resource consumption by year (bar)
+```{r}
+### the average water consumption across globle in each year
+# Error bars represent standard error of the mean
+# summarySE provides the standard deviation, standard error of the mean, and a (default 95%) confidence interval
+library(Rmisc)
+library(cowplot)
+df.summ <- summarySE(df, measurevar="Score", groupvars=c("Year"))
+str(df.summ)
+
+p2_global_mean_byYr <- ggplot(df.summ, aes(x=Year, y=Score)) +
+  geom_bar(position = position_dodge(0.8), stat="identity", width = 0.8)+
+  # scale_y_continuous(breaks = seq(-9, 9, 3),
+  #                    limits =   c(-9, 9)) +
+  guides(fill = guide_legend(keywidth = 0.7, keyheight = 0.7)) +
+  geom_errorbar(aes(ymin = Score-se, ymax = Score+se),
+                width = 0.3,                    # Width of the error bars
+                position=position_dodge(.8)) +
+  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
+                labels = trans_format("log10", math_format(10^.x))) +
+  
+      # 
+      # xlab('') +
+  theme_bw() +
+      # ggtitle(SDG) +
+  ylab(ylab)
+  
+p2_global_mean_byYr
+```
+
+
+
+
+### Resource consumption by country
+
+```{r}
+df.mean <- df %>% group_by(Nation) %>% dplyr::summarise(mean = mean(Score))
+df.new  <- merge(x = df, y = df.mean, by = 'Nation', all.x = T)
+df <- df.new
+
+p_byCountry <- 
+  ggplot(df, aes(x=reorder(Nation, mean), y=Score)) + 
+  # geom_violin()
+  geom_boxplot() +
+  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
+                labels = trans_format("log10", math_format(10^.x))) +
+  ylab(ylab) +
+  xlab('Country') +
+
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3))
+p_byCountry
+```
+
+
+
+
+
+
+### Resource consumption by country by year
+
+```{r plot}
+p_byCountry_byYr <- 
+  ggplot(df, aes(x=Year, y=Score)) + 
+  geom_line() + facet_wrap(~Nation, scales = 'free_y') + # 
+  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
+                labels = trans_format("log10", math_format(10^.x))) +
+  ylab(ylab) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3))
+
+p_byCountry_byYr
+
+getwd()
+dir   <- "G:/My Drive/_paper/170923_trade_Global SDGs/results/Figures/"
+# fname <- paste0(dir, 'distribution_p_byCountry_byYr_', SDG, '.png')
+# ggsave(filename = fname, plot = last_plot(), 
+#        width = 12, height = 10, units = 'in', dpi = 300)
+```
+
+
+### Final combined plot
+```{r}
+p <- plot_grid(p_byCountry, p_byCountry_byYr, labels = c("a", "b"), 
+               ncol = 1, nrow = 2, align = 'hv'); # p
+
+getwd()
+dir.fig
+fname <- paste0(dir.fig, '/Fig_S5_distribution_', ID, '_', SDG, '_', Sys.Date(), '.jpg'); fname
+ggsave(filename = fname, plot = last_plot(),width = 12, height = 20, units = 'in', dpi = 300)
+
+# save_plot(filename = fname, plot = p, ncol = 1, nrow = 1, base_aspect_ratio = 1.3)
+
+```
+
+
+

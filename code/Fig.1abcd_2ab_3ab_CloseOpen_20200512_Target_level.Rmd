@@ -1,0 +1,3240 @@
+---
+title: "Global_trade_SDGs"
+author: "Yingjie Li"
+date: "November 13, 2019"
+output:
+  pdf_document: default
+  html_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+# WD and packages
+```{r echo=FALSE}
+remove(list = ls())
+
+### packages
+library(readxl)
+library(writexl)
+library(tidyverse)
+library(ggplot2)
+library(reshape2)
+# library(here)
+library(Rmisc)
+library(scales)
+library(sf)
+library(cowplot)
+library(tmap)
+library(ggpubr)
+
+
+### set work dir
+path <- rstudioapi::getSourceEditorContext()$path
+dir  <- dirname(rstudioapi::getSourceEditorContext()$path); dir
+setwd(dir)
+setwd('..') # set directory by one folder up
+getwd()
+dir.root <- getwd()
+
+
+wdir <- './data/update_0503_SUM_dist/_output_score'
+setwd(wdir)
+getwd()
+
+dir.fig <- paste0(dir.root, '/data/Figures'); dir.fig
+```
+
+# Data preparation
+## .1 SDGc data read in
+```{r}
+
+# read data
+getwd()
+
+csvs <- list.files(pattern="^score_c_*"); 
+print(csvs)
+
+# [1] way#1: read csv as dataframe (all cols)
+# for (csv in csvs){
+#   score_x <- read.csv(file = csv)[, -1]
+#   names(score_x) <- c('nation', seq(1995, 2009), "scenario", "group")
+#   assign(paste('sdg_', substr(csv, 7, 13), sep=''), score_x)
+#   # assign(paste('', gsub('score_|.csv', '', csv), sep=''), score_x)
+# }
+
+# [2] way#1: read csv as dataframe (remove non-numeric cols)
+for (csv in csvs){
+  print(csv)
+  score_x <- read.csv(file = csv)[, -c(1:2, 18:19)]
+  names(score_x) <- c(seq(1995, 2009))
+  assign(paste('sdg_', substr(csv, 7, 13), sep=''), score_x)
+  # assign(paste('', gsub('score_|.csv', '', csv), sep=''), score_x)
+}
+
+# first col as row name
+# score_x <- data.frame(score_x[,-1], row.names=score_x[,1])
+```
+
+## .2 Data description 
+  Data description abbreviated as DD
+### .2.1 Input data
+
+```{r }
+### for water
+# add "nation, scenario, group" cols
+# SDGc_water <- sdg_c_7_ene %>% ## sdg_c_7_ene, sdg_c_renew
+#   mutate(nation   = read.csv("score_c_6_wat.csv")$nation,
+#          scenario = read.csv("score_c_6_wat.csv")$scenario,
+#          group    = read.csv("score_c_6_wat.csv")$group)
+
+sdg_list <- list(sdg_c_6_wat, sdg_c_72_en, sdg_c_73_en, # sdg_c_7_ene,
+                 sdg_c_8_mat, sdg_c_9_co2, sdg_c_13_co, 
+                 # sdg_c_15_fo, 
+                 sdg_c_151_f, sdg_c_152_f)
+
+sdg_name_list <- list('sdg_c_6_wat', 'sdg_c_72_en', 'sdg_c_73_en',
+                      'sdg_c_8_mat', 'sdg_c_9_co',  'sdg_c_13_co', 
+                      'sdg_c_151_f', 'sdg_c_152_f')
+
+SDGc_single <- data.frame() ## a blank data table to append data to
+
+info <- read.csv("score_c_6_wat.csv")
+
+for (i in seq(1, length(sdg_list))) {
+  print(i)
+  ## extract the number in the string and create the SDG name chr
+  sdg_name <- paste0('SDG_', as.numeric(gsub("\\D", "", sdg_name_list[i])));
+  print(sdg_name)
+  
+  sdg_i <- sdg_list[[i]] %>% ## loop through a list, need two []
+    ## add "nation, scenario, group" cols
+    mutate(nation   = info$nation,
+           scenario = info$scenario,
+           group    = info$group)
+  sdg_i <- cbind(SDG_name = sdg_name, sdg_i) ## add SDG name col
+  SDGc_single <- rbind(SDGc_single, sdg_i)
+}
+
+names(sdg_i)
+
+### wide to long format, which is better for plot facet
+df <- SDGc_single %>%
+  dplyr::select(SDG_name, nation, scenario, group, as.character(seq(1995, 2009))) %>%
+  gather(key = 'year', value = 'score', `1995`:`2009`)
+str(df)
+df$year <- as.numeric(df$year)
+
+```
+
+
+
+
+
+### .2.2 Plot data distribution
+#### .1 histogram
+```{r }
+### histogram
+ggplot(data = df, aes(x = score))+
+           geom_histogram() + # binwidth = 
+           facet_wrap(~SDG_name, nrow = 2) +
+           theme_bw()
+fname <- paste0(dir.fig, '/each_SDG_histogram_Target.png'); fname
+ggsave(filename = fname, plot = last_plot(), width = 9, height = 6, units = 'in', dpi = 300)
+```
+
+
+
+#### .2 boxplot - each nation
+The data distribution for each nation
+```{r }
+### violin plot
+ggplot(data = df, aes(x = reorder(nation, score), y = score, fill = nation))+
+  # geom_violin(alpha = 0.5) +
+  geom_boxplot(alpha = 0.5) + ## , width = 0.2
+  facet_wrap(~SDG_name, ncol = 3) +
+  theme_bw() +
+  guides(fill=guide_legend(ncol=8)) + ## cols of the legend
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        legend.position = c(0.7, 0.15)) +
+  theme(legend.position = "none")
+
+fname <- paste0(dir.fig, '/each_SDG_boxplot_in_each_country_2020.png'); fname
+ggsave(filename = fname, plot = last_plot(), width = 12, height = 9, units = 'in', dpi = 300)
+
+```
+
+
+#### .3  Each SDG score change over time
+To viz the SDG score in each nation change over time
+```{r }
+### each country change over time 
+ggplot(data = df, aes(x = year, y = score, color = nation)) +
+  geom_point() +
+  geom_smooth(method = 'loess', formula = 'y ~ x', se = F)+
+  # geom_line() +
+  facet_wrap(~ scenario + SDG_name, ncol = 6, scales = 'free_y') +
+  # facet_grid(scenario ~ SDG_name) + ## this one is better
+  guides(color=guide_legend(ncol=2)) + ## cols of the legend
+  theme_bw()
+getwd()
+
+fname <- paste0(dir.fig, '/each_SDG_in_each_country_change_over_time_facet_wrap_Target.png')
+# ggsave(filename = fname, plot = last_plot(), width = 15, height = 10, units = 'in', dpi = 300)
+
+```
+
+
+
+
+## .3 Composite SDG (SDGc) score
+
+  Because SDG 12 share the same indicators as SDG8, we will only account one of them to calculate composite SDG score (SDGc).
+  
+```{r echo=FALSE, results=FALSE, include=FALSE}
+# ----- cal SDGc -----
+ls()
+
+### before 1st revision, we use 'sdg_c_7_ene' as SDG7
+SDGc_c <- (sdg_c_6_wat + sdg_c_72_en + sdg_c_73_en + ## sdg_c_7_ene + 
+           sdg_c_8_mat + sdg_c_9_co2 + sdg_c_13_co + 
+           # sdg_c_15_fo
+           sdg_c_151_f + sdg_c_152_f)/8  ## goal level: /6; target level: /8
+
+# add "nation, scenario, group" cols
+SDGc_c <- SDGc_c %>%
+  mutate(nation   = read.csv("score_c_6_wat.csv")$nation,
+         scenario = read.csv("score_c_6_wat.csv")$scenario,
+         group    = read.csv("score_c_6_wat.csv")$group)
+
+# ########################################################################### #
+# diff between dst and ner; by global/ group -----
+# ########################################################################### #
+
+# a name for save to csv
+df.xlsx <- "99_sdgc.xlsx"
+
+score_SDGc_c <- SDGc_c %>% 
+  dplyr::select(nation, as.character(seq(1995, 2009)), scenario, group)
+
+getwd()
+
+### save result as csv
+write.csv(x = score_SDGc_c, file = "score_c_99_sdgc.csv", row.names = T)
+
+source(paste0(dir, "/single_diff_func_c_approach.R"))
+single_diff_func_c(score_SDGc_c)
+
+# source(paste0(dir, "/single_diff_func_b_approach.R"))
+# single_diff_func_b(score_SDGc_b)
+
+```
+
+
+
+
+
+## .4 Subset SDG scores for each scenario
+```{r echo=FALSE}
+# subset SDG_near and SDG_distant
+SDGc_rel <- SDGc_c %>% filter(scenario == 'rel_c')
+SDGc_not <- SDGc_c %>% filter(scenario == 'not_c')
+SDGc_ner <- SDGc_c %>% filter(scenario == 'ner_c')
+SDGc_dst <- SDGc_c %>% filter(scenario == 'dst_c')
+
+str(SDGc_rel)
+
+SDGc_rel$group  <- as.factor(SDGc_rel$group)
+SDGc_not$group  <- as.factor(SDGc_not$group)
+SDGc_ner$group  <- as.factor(SDGc_ner$group)
+SDGc_dst$group  <- as.factor(SDGc_ner$group)
+
+```
+
+
+#### ---- Sig test for developing countries (trade vs. no-trade)
+
+  Question : Is there any significant difference between trade and men no-trade?
+
+```{r}
+## choose  a country group: o or 1
+gp <- 1
+SDGc_gp_rel <- SDGc_c %>% filter(scenario == 'rel_c', group == gp)
+SDGc_gp_not <- SDGc_c %>% filter(scenario == 'not_c', group == gp)
+
+SDGc_gp <- rbind(SDGc_gp_rel, SDGc_gp_not)
+
+## choose and test one year
+SDGc_gp_yr <- SDGc_gp %>% select(`1995`, scenario)
+names(SDGc_gp_yr) <- c('score', 'scenario')
+
+SDGc_gp_yr %>% group_by(scenario) %>% dplyr::summarise(score_mean = mean(score))
+
+
+my_data <- SDGc_gp_yr
+# Plot weight by group and color by group
+library("ggpubr")
+ggboxplot(my_data, x = "scenario", y = 'score', 
+          color = "scenario", palette = c("#00AFBB", "#E7B800"),
+          ylab = "score", xlab = "scenario")
+
+
+res <- wilcox.test(score ~ scenario, data = my_data,
+                   exact = FALSE)
+# Print the p-value only
+res$p.value
+
+## The p-value of the test is 0.02712, which is less than the significance level alpha = 0.05. We can conclude that men’s median weight is significantly different from women’s median weight with a p-value = 0.02712.
+levels(my_data$scenario)
+
+# if you want to test whether the median men’s weight is less than the median women’s weight, type this:
+wilcox.test(score ~ scenario, data = my_data,
+            exact = FALSE, alternative = "less")
+# Or, if you want to test whether the median men’s weight is greater than the median women’s weight, type this
+wilcox.test(score ~ scenario, data = my_data, 
+            exact = FALSE, alternative = "greater")
+
+
+### ref: http://www.sthda.com/english/wiki/comparing-means-in-r
+```
+
+
+
+## SI csv file
+```{r}
+#############################################################
+# provide data to the review #2
+SDGc_rel_4yr <- SDGc_rel %>% select(nation, c(1,6,11,15))
+SDGc_not_4yr <- SDGc_not %>% select(nation, c(1,6,11,15))
+getwd()
+write.csv(x = SDGc_rel_4yr, file = 'Supplementary_SDGc_scores_withTrade_4yr_2020.csv')
+
+```
+
+
+
+
+
+
+#  Figures
+## ----- Theme and font
+```{r}
+
+# font <- "Arial" ## "Times" 
+font      <- 'sans' ## = "TT Arial"
+font_size <- 6.5 ## max = 7; min = 5 for Nature Sustainability
+# windowsFonts()
+library(extrafont)
+# font_import(pattern = 'Arial')
+# loadfonts(device = "win")
+
+### for Fig 1a in the main text
+mytheme <- #ggpubr::theme_transparent()+
+  # theme_pubr(base_size = font_size, base_family = font)+
+  theme(
+    ### Hide panel borders and remove grid lines
+    # panel.border = element_blank(),
+    # axis.line = element_line(size = 0.25),  # colour = 'black', 
+    # axis.ticks = element_line(size = 0.25), # colour = "black", 
+    
+    # panel.border = element_rect(colour = NA),
+    # axis.title = element_text(face = "bold",size = rel(1)),
+    # axis.title.y = element_text(angle=90,vjust =2),
+    # axis.title.x = element_text(vjust = -0.2),
+    # axis.text = element_text(), 
+    # axis.line = element_line(colour="black"),
+    # axis.ticks = element_line(),
+    
+    # panel.grid.major = element_line(colour="#f0f0f0"),
+    # panel.grid.minor = element_blank(),
+    # legend.direction = "horizontal",
+    # legend.key.size= unit(0.2, "cm"),
+    # legend.margin = unit(0, "cm"),
+    # legend.title = element_text(face="italic"),
+    # plot.margin=unit(c(10,5,5,5),"mm"),
+    
+    # strip.background=element_rect(colour="#f0f0f0",fill="#f0f0f0"),
+    # strip.text = element_text(face="bold"),
+   
+    
+    # legend.key = element_rect(fill = NA, colour = NA, size = 0.25),
+    # legend.key = element_rect(fill = NA),
+    panel.background = element_rect(fill = "transparent", colour = NA),
+    # plot.background = element_rect(fill = "transparent", colour = NA),
+    legend.background = element_rect(fill = "transparent", colour = NA),
+    legend.box.background = element_rect(fill = "transparent", colour = NA),
+    axis.title = element_text(family=font, size=font_size),
+    text=element_text(family=font, size=font_size))
+```
+
+## Figure 1a - Global SDGc by year by trade scenario
+
+### .1 equal weight
+```{r echo=FALSE}
+
+# 1) equal weight -------------------------------------------------------------
+glo_rel <- SDGc_rel %>% summarise_at(.vars = names(.)[1:15],
+                                     .funs = c(mean="mean"))
+glo_not <- SDGc_not %>% summarise_at(.vars = names(.)[1:15],
+                                     .funs = c(mean="mean"))
+# global SDGc under only nearby trade scenario (without distant trade)
+glo_ner <- SDGc_ner %>% summarise_at(.vars = names(.)[1:15],
+                                     .funs = c(mean="mean"))
+# global SDGc under only distant trade scenario (without nearby trade)
+glo_dst <- SDGc_dst %>% summarise_at(.vars = names(.)[1:15],
+                                     .funs = c(mean="mean"))
+
+# add scenario name col
+glo_rel <- cbind(group_scenario = 'glo_rel', glo_rel)
+glo_not <- cbind(group_scenario = 'glo_not', glo_not)
+glo_dst <- cbind(group_scenario = 'glo_dst', glo_dst)
+glo_ner <- cbind(group_scenario = 'glo_ner', glo_ner)
+filecode<- 'w1'
+title   <- 'Equal weight'
+
+# data for Fig 1a
+glo_relnot_w1 <- rbind(glo_rel, glo_not) %>%
+  as.data.frame %>%
+  melt(. , id = 'group_scenario') %>% # items in id will not be changed
+  mutate(year = as.factor(gsub('_mean|_sum', '', variable)))
+
+# data for Fig 3a
+glo_notnerdst_w1 <- rbind(glo_dst, glo_ner, glo_not) %>%
+  as.data.frame() %>%
+  melt(. , id = 'group_scenario') %>% # items in id will not be changed
+  mutate(year = as.factor(gsub('_mean|_sum', '', variable))) %>%
+  dplyr::select(group_scenario, year, value)
+
+
+glo.byscenario.w1 <- rbind(glo_rel,
+                           glo_not,
+                           glo_ner,
+                           glo_dst) %>%
+  as.data.frame() %>%
+  dplyr::select(group_scenario, paste0(seq(1995, 2009), '_mean')) %>%
+  # wide table to long table
+  melt(. , id = 'group_scenario') %>%    # items in id will not be changed
+  # create new col using number-year
+  mutate(year = as.factor(gsub('_mean|_sum', '', variable))) %>%
+  dplyr::select(group_scenario, year, value)
+
+# input data for Fig 1a
+fig.1a.dt <- glo_relnot_w1
+
+### import plot function 
+source(paste0(dir, "/Figure1a_func.R"))
+fig1a.w1 <- fun_fig_1a(fig.1a.dt)
+fig1a.w1
+
+p1a <- plot_grid(fig1a.w1, labels = 'auto')
+
+today <- format(Sys.Date(), "%Y%m%d")
+fname <- paste0(dir.fig, "/Fig_1a_", filecode, '.pdf');fname
+# ggsave(fname, p1a, width = 8.8, height = 6, units = "cm", dpi = 300) 
+ggsave(fname, p1a, width = 8.8, height = 8, units = 'cm', limitsize = FALSE,  bg = "transparent")
+
+# (fig1a <- ggarrange(fig1a.w1, labels = 'auto',  font.label = list(size = 7)))
+fig1a <- fig1a.w1
+
+
+```
+
+
+
+
+
+### .2 pop weight
+```{r echo=FALSE}
+# 2) pop weight ----------------------------------------------------------------
+getwd()
+dir  <- dirname(rstudioapi::getSourceEditorContext()$path); dir
+dir.input <- paste0(dir, '/update_0503_SUM_dist/_input_data/')
+# setwd(paste0(dir, '/update_0503_SUM_dist'))
+
+# pop data -----
+pop <- read.csv(file = paste0(dir.input, '_pop_worldbank_19952009.csv'), 
+                header = T, stringsAsFactors = F)
+pop <- as.data.frame(pop)
+pop <- data.frame(pop[,-1], row.names=pop[,1]) # 1st col as row names
+pop <- pop[order(row.names(pop)), ] # sort data by row name
+pop$group <- SDGc_rel$group
+
+# Saving on object in RData format
+getwd()
+# save(pop, file = paste0(dir.input, "/pop_data.RData"))
+load(file = paste0(dir.input, "/pop_data.RData"))
+
+# import function: _function_Global_SDG.R  
+source(paste0(dir, "/_function_Global_SDG.R"))
+
+# cal 
+glo_rel.wpop <- Global_SDG_fun(SDGc_rel, pop)
+glo_not.wpop <- Global_SDG_fun(SDGc_not, pop)
+glo_ner.wpop <- Global_SDG_fun(SDGc_ner, pop)
+glo_dst.wpop <- Global_SDG_fun(SDGc_dst, pop)
+
+
+# add scenario name col
+glo_rel <- cbind(group_scenario = 'glo_rel', glo_rel.wpop)
+glo_not <- cbind(group_scenario = 'glo_not', glo_not.wpop)
+glo_dst <- cbind(group_scenario = 'glo_dst', glo_dst.wpop)
+glo_ner <- cbind(group_scenario = 'glo_ner', glo_ner.wpop)
+
+filecode<- 'wpop'
+title   <- 'Weight by population'
+
+# data for Fig 1a
+glo_relnot_wpop <- rbind(glo_rel, glo_not) %>%
+  as.data.frame %>%
+  melt(. , id = 'group_scenario') %>%# items in id will not be changed
+  mutate(year = as.factor(gsub('_mean|_sum', '', variable)))
+
+# data for Fig 3a
+glo_notnerdst_wpop <- rbind(glo_dst, glo_ner, glo_not) %>%
+  as.data.frame() %>%
+  melt(. , id = 'group_scenario') %>% # items in id will not be changed
+  mutate(year = as.factor(gsub('_mean|_sum', '', variable))) %>%
+  dplyr::select(group_scenario, year, value)
+
+
+
+glo.byscenario.wpop<-rbind(glo_rel,
+                           glo_not,
+                           glo_ner,
+                           glo_dst) %>%
+  as.data.frame %>%
+  dplyr::select(group_scenario, paste0(seq(1995, 2009), '_sum')) %>%
+  # wide table to long table
+  melt(. , id = 'group_scenario') %>%    # items in id will not be changed
+  # create new col using number-year
+  mutate(year = as.factor(gsub('_mean|_sum', '', variable))) %>%
+  dplyr::select(group_scenario, year, value)
+
+# input data for Fig 1a
+fig.1a.dt <- glo_relnot_wpop
+
+# import plot function 
+fig1a.pop <- fun_fig_1a(fig.1a.dt)
+
+```
+
+
+
+### .3 gdp weight
+
+```{r echo=FALSE}
+# 3) gdp weight ----------------------------------------------------------------
+getwd()
+# gdp data ----
+GDP_c_csv  <- paste0(dir, '/update_0503_SUM_dist/_input_data/_GDP_c_0_capital.csv')
+GDP_b_csv  <- paste0(dir, '/update_0503_SUM_dist/_input_data/_GDP_b_0_capital.csv')
+
+GDP_c      <- read.csv(file = GDP_c_csv, header = T, stringsAsFactors = F)
+GDP_b      <- read.csv(file = GDP_b_csv, header = T, stringsAsFactors = F)
+
+GDP_c_rel <- GDP_c %>% filter(scenario == 'rel_c') %>% dplyr::select(-1, -17) %>%
+  mutate(group = SDGc_rel$group)
+GDP_c_not <- GDP_c %>% filter(scenario == 'not_c') %>% dplyr::select(-1, -17) %>%
+  mutate(group = SDGc_rel$group)
+GDP_c_ner <- GDP_c %>% filter(scenario == 'ner_c') %>% dplyr::select(-1, -17) %>%
+  mutate(group = SDGc_rel$group)
+GDP_c_dst <- GDP_c %>% filter(scenario == 'dst_c') %>% dplyr::select(-1, -17) %>%
+  mutate(group = SDGc_rel$group)
+
+# Saving on object in RData format
+getwd()
+# save(GDP_c, GDP_b, GDP_c_rel, GDP_c_not, GDP_c_ner, GDP_c_dst,
+#      file = paste0(dir.input, "/gdp_c_data.RData")
+load(file = paste0(dir.input, "/gdp_c_data.RData"))
+
+
+# GDP_b_rel <- GDP_b %>% filter(scenario == 'rel_b') %>% dplyr::select(-1, -17) %>%
+#   mutate(group = SDGc_rel$group)
+# GDP_b_not <- GDP_b %>% filter(scenario == 'not_b') %>% dplyr::select(-1, -17) %>%
+#   mutate(group = SDGc_rel$group)
+# GDP_b_ner <- GDP_b %>% filter(scenario == 'ner_b') %>% dplyr::select(-1, -17) %>%
+#   mutate(group = SDGc_rel$group)
+# GDP_b_dst <- GDP_b %>% filter(scenario == 'dst_b') %>% dplyr::select(-1, -17) %>%
+#   mutate(group = SDGc_rel$group)
+
+# import function  
+source(paste0(dir, "/_function_Global_SDG.R"))
+
+glo_rel.wgdp <- Global_SDG_fun(SDGc_rel, GDP_c_rel)
+glo_not.wgdp <- Global_SDG_fun(SDGc_not, GDP_c_not)
+glo_ner.wgdp <- Global_SDG_fun(SDGc_ner, GDP_c_ner)
+glo_dst.wgdp <- Global_SDG_fun(SDGc_dst, GDP_c_dst)
+
+
+# add scenario name col
+glo_rel <- cbind(group_scenario = 'glo_rel', glo_rel.wgdp)
+glo_not <- cbind(group_scenario = 'glo_not', glo_not.wgdp)
+glo_dst <- cbind(group_scenario = 'glo_dst', glo_dst.wgdp)
+glo_ner <- cbind(group_scenario = 'glo_ner', glo_ner.wgdp)
+
+filecode<- 'wgdp'
+title   <- 'Weight by GDP'
+
+# data for Fig 1a
+glo_relnot_wgdp <- rbind(glo_rel, glo_not) %>%
+  as.data.frame %>%
+  melt(. , id = 'group_scenario') %>%# items in id will not be changed
+  mutate(year = as.factor(gsub('_mean|_sum', '', variable)))
+
+
+# data for Fig 3a
+glo_notnerdst_wgdp <- rbind(glo_dst, glo_ner, glo_not) %>%
+  as.data.frame() %>%
+  melt(. , id = 'group_scenario') %>% # items in id will not be changed
+  mutate(year = as.factor(gsub('_mean|_sum', '', variable))) %>%
+  dplyr::select(group_scenario, year, value)
+
+
+glo.byscenario.wgdp<-rbind(glo_rel,
+                           glo_not,
+                           glo_ner,
+                           glo_dst) %>%
+  as.data.frame %>%
+  dplyr::select(group_scenario, paste0(seq(1995, 2009), '_sum')) %>%
+  # wide table to long table
+  melt(. , id = 'group_scenario') %>%    # items in id will not be changed
+  # create new col using number-year
+  mutate(year = as.factor(gsub('_mean|_sum', '', variable))) %>%
+  dplyr::select(group_scenario, year, value)
+
+# input data for Fig 1a
+fig.1a.dt <- glo_relnot_wgdp
+
+# plot by loeading the plot function 
+source(paste0(dir, "/Figure1a_func.R"))
+
+fig1a.gdp <- fun_fig_1a(fig.1a.dt)
+
+```
+
+
+
+### .4 gdppc weight
+```{r}
+
+### subset data under each scenario as weight
+GDPPC_c_rel <- GDP_c_rel[,1:15]/pop[,1:15]; GDPPC_c_rel$group <- SDGc_rel$group
+GDPPC_c_not <- GDP_c_not[,1:15]/pop[,1:15]; GDPPC_c_not$group <- SDGc_rel$group
+GDPPC_c_ner <- GDP_c_ner[,1:15]/pop[,1:15]; GDPPC_c_ner$group <- SDGc_rel$group
+GDPPC_c_dst <- GDP_c_dst[,1:15]/pop[,1:15]; GDPPC_c_dst$group <- SDGc_rel$group
+
+### to calculate each SDG score at global level based on different weight across countries
+### import function: Global_SDG_fun.R  
+source(paste0(dir, "/_function_Global_SDG.R"))
+
+glo_rel.wgdppc <- Global_SDG_fun(SDGc_rel, GDPPC_c_rel)
+glo_not.wgdppc <- Global_SDG_fun(SDGc_not, GDPPC_c_not)
+glo_ner.wgdppc <- Global_SDG_fun(SDGc_ner, GDPPC_c_ner)
+glo_dst.wgdppc <- Global_SDG_fun(SDGc_dst, GDPPC_c_dst)
+
+
+# add scenario name col
+glo_rel <- cbind(group_scenario = 'glo_rel', glo_rel.wgdppc)
+glo_not <- cbind(group_scenario = 'glo_not', glo_not.wgdppc)
+glo_dst <- cbind(group_scenario = 'glo_dst', glo_dst.wgdppc)
+glo_ner <- cbind(group_scenario = 'glo_ner', glo_ner.wgdppc)
+
+filecode<- 'wgdppc'
+title   <- 'Weight by GDP per capita'
+
+# data for Fig 1a
+glo_relnot_wgdppc <- rbind(glo_rel, glo_not) %>%
+  as.data.frame %>%
+  melt(. , id = 'group_scenario') %>%# items in id will not be changed
+  mutate(year = as.factor(gsub('_mean|_sum', '', variable)))
+
+
+# data for Fig 3a
+glo_notnerdst_wgdppc <- rbind(glo_dst, glo_ner, glo_not) %>%
+  as.data.frame() %>%
+  melt(. , id = 'group_scenario') %>% # items in id will not be changed
+  mutate(year = as.factor(gsub('_mean|_sum', '', variable))) %>%
+  dplyr::select(group_scenario, year, value)
+
+
+glo.byscenario.wgdppc <-rbind(glo_rel,
+                              glo_not,
+                              glo_ner,
+                              glo_dst) %>%
+  as.data.frame() %>%
+  dplyr::select(group_scenario, paste0(seq(1995, 2009), '_sum')) %>%
+  # wide table to long table
+  melt(. , id = 'group_scenario') %>%    # items in id will not be changed
+  # create new col using number-year
+  mutate(year = as.factor(gsub('_mean|_sum', '', variable))) %>%
+  dplyr::select(group_scenario, year, value)
+
+# input data for Fig 1a
+fig.1a.dt <- glo_relnot_wgdppc
+
+# plot by loeading the plot function 
+fig1a.gdppc <- fun_fig_1a(fig.1a.dt)
+
+```
+
+
+
+## Figure S7 1a - 4 weights approach
+```{r echo=FALSE}
+
+library(cowplot)
+library(grid)
+library(magick)
+
+today <- format(Sys.Date(), "%Y%m%d"); today
+
+getwd()
+dir.fig
+
+
+#### way #1
+# (p1 <- ggdraw() + 
+#     draw_image(paste0(dir.fig, '/Fig.1a_w1_', today, '.png'), scale = 1))
+# (p2 <- ggdraw() + draw_image(paste0(dir.fig, '/Fig.1a_wpop_', today, '.png'), 
+#                             scale = 1))
+# (p3 <- ggdraw() + draw_image(paste0(dir.fig, '/Fig.1a_wgdp_', today, '.png'), 
+#                             scale = 1))
+# (p4 <- ggdraw() + draw_image(paste0(dir.fig, '/Fig.1a_wgdppc_', today, '.png'), 
+#                             scale = 1))
+# 
+# (fig1a_4wights <- plot_grid(p1, p2, p3, p4, labels = 'auto', 
+#                  # label_size = 12, 
+#                  ncol = 2, align = "h"))
+
+##### way #2
+library(ggpubr)
+
+(fig1a_4wights <- ggarrange(
+  fig1a.w1, fig1a.pop, fig1a.gdp, fig1a.gdppc,
+  nrow = 2, ncol = 2, labels = 'auto',
+  align = 'v', common.legend = F)) 
+
+#### save fig to local
+fname <- paste0(dir.fig, '/Fig_S7_1a_4weights_', today, '_target.jpg'); fname
+ggsave(fname, fig1a_4wights, width = 6, height = 6, units = "in",dpi = 300)
+# ggsave(fname, fig1a_4wights, width = 18, height = 18, units = "cm",dpi = 300)
+
+```
+
+
+
+## Figure S2: Each SDG changes over time, by scenario
+
+  'SDGc_single' indludes all the input data.
+  
+```{r}
+
+# levels_sdgs <- c("SDG_6","SDG_7","SDG_8","SDG_9","SDG_13","SDG_15") ## count = 7
+levels_sdgs <- c("SDG_6","SDG_72", "SDG_73",  "SDG_8",
+                 "SDG_9","SDG_13", "SDG_151", "SDG_152") ## count = 8
+
+
+
+sdg.byscenario.w1 <- SDGc_single %>%
+  as.data.frame() %>%
+  # dplyr::filter(SDG_name == filecode) %>%
+  dplyr::filter(scenario %in% c('rel_c', 'not_c')) %>%
+  group_by(SDG_name, scenario) %>% 
+  summarise_at(.vars = names(.)[2:16], .funs = c(mean="mean")) %>%
+  
+  ### wide table to long table
+  gather(key = 'variable', value = 'value', 3:17) %>%
+  ### or use this function
+  # melt(. , id = c('SDG_name', 'scenario')) #%>%    # items in id will not be changed
+  ### create new col using number-year
+  mutate(year = as.factor(gsub('_mean|_sum', '', variable))) %>%
+  dplyr::select(-variable) %>%
+  dplyr::rename(group_scenario = scenario) %>%
+  ungroup() %>%
+  dplyr::mutate_if(is.factor, as.character) %>%
+  # mutate_at("group_scenario", character) %>%
+  dplyr::mutate_at("group_scenario", factor) %>% # character to factor
+  dplyr::mutate_at('year', as.numeric) %>%
+# unique(sdg.byscenario.w1$SDG_name)
+  dplyr::mutate(SDG_name = factor(SDG_name,      # change the order by changing factor levels
+                                  levels = levels_sdgs))%>%
+  dplyr::mutate(group_scenario = factor(group_scenario, levels = c('rel_c', 'not_c'))) 
+
+str(sdg.byscenario.w1)
+levels(sdg.byscenario.w1$group_scenario)
+levels(sdg.byscenario.w1$SDG_name) ## "SDG_6"  "SDG_7"  "SDG_8"  "SDG_9"  "SDG_13" "SDG_15"
+
+
+
+# change facet labels
+label_targets <- c(
+  # 'SDGc - Composite SDG',
+  'SDG6.4 - Sustainable water use & supply', 
+  # 'SDG7 - Sustainable energy',
+  'SDG7.2 - Increase use of renewable energy',
+  'SDG7.3 - Improve energy efficiency',
+  'SDG8.4/12.2 - Sus. resource consumption',
+  'SDG9.4 - Sustainable industrialization',   
+  # 'SDG12 - Sustainable consumption ',   
+  'SDG13.2 - Integrated climate change measures', 
+  # 'SDG15 - Sustainable use of land',
+  'SDG15.1 - Sustainable use of forest',
+  'SDG15.2 - Sustainable forest management'
+  )
+
+levels(sdg.byscenario.w1$SDG_name) <- label_targets
+levels(sdg.byscenario.w1$SDG_name)
+
+
+green_dark  <- "#31a354"
+green_light <- "#a1d99b"
+greens <- c(green_dark, green_light)
+  
+  
+# plot by loeading the plot function 
+source(paste0(dir, "/Figure1a_func.R"))
+# fun_fig_1a(sdg.byscenario.w1)
+ggplot(data=sdg.byscenario.w1, 
+       aes(x=as.factor(year), y=value, group = group_scenario)) + # , colour = scenarios
+    #geom_line(size=1, aes(linetype=scenarios)) + 
+    geom_point(aes(shape=group_scenario, color = group_scenario)) + # , color=scenarios
+    geom_smooth(method=loess,   # Add linear regression line
+                se=T, aes(linetype = group_scenario, 
+                          fill = group_scenario,
+                          colour = group_scenario),
+                # colour = 'black',
+                size = 0.5)+    # (by default includes 95% confidence region)
+    scale_linetype_manual(values = c('solid', 'dashed'),
+                          labels=c("with trade",
+                                   "no-trade scenario")) +
+    scale_color_manual(values = greens, ## c("black",'black'),
+                       labels = c("with trade",
+                                  "no-trade scenario")) +
+    scale_fill_manual(values = greens, ## c("black",'black'),
+                       labels = c("with trade",
+                                  "no-trade scenario")) +
+    # set point shapes and labels
+    scale_shape_manual(values = c(19,1),
+                       labels=c("with trade",
+                                "no-trade scenario")) +
+    scale_y_continuous(labels = scales::number_format(accuracy = 1)) + ## only Integer, no Decimal
+    theme_bw() +
+    xlab('Year') +
+    ylab('SDG target scores') +
+    theme(legend.position = c(0.11, 0.95), # c(0.2, 0.9) when width =6
+          legend.title=element_blank(),
+          legend.key.width = unit(0.5,"in"),
+          legend.background = element_rect(fill="transparent"),
+          axis.text.x = element_text(angle=90, hjust=1, vjust = 0.5),
+          panel.grid.major.x = element_blank(),
+          panel.grid.minor.y = element_blank(),
+          panel.grid.major.y = element_blank(),
+          #text = element_text(size=15),
+          #axis.text=element_text(size=18),
+          #axis.title = element_text(size=18,face="bold"),
+          plot.title = element_text(size=12)) +
+  facet_wrap(.~SDG_name, scales = 'free_y', ncol = 3)
+
+# today <- format(Sys.Date(), "%Y%m%d")
+fname <- paste0(dir.fig, '/Fig_S2_each_SDG_temporal_chg_Target.jpg'); fname
+ggsave(filename = fname, plot = last_plot(), 
+       width = 10, height = 9, units = "in", dpi = 300) 
+
+```
+
+
+
+## Figure S3. Each SDG by year, difference between trade and no-trade
+```{r}
+
+str(df)
+df$group <- as.factor(df$group)
+
+for (i in seq(1, length(sdg_list))) {
+  print(i)
+  ## extract the number in the string and create the SDG name chr
+  sdg_name <- paste0('SDG_', as.numeric(gsub("\\D", "", sdg_name_list[i]))); print(sdg_name)
+  
+  ### for developed and developing group
+  sdg_i_dev <- df %>% 
+    dplyr::filter(SDG_name %in% c(sdg_name)) %>%
+    dplyr::filter(scenario %in% c('rel_c', 'not_c')) %>%
+    group_by(scenario, group, year) %>%
+    summarise_at(.vars = names(.)[6], .funs = c(mean="mean")) %>%
+    spread(key = scenario, value = mean) %>% ## long to wide, seperate rel_c and not_c (trade and no-trade)
+    dplyr::mutate(value_dif = rel_c - not_c, 
+                  SDG_name = sdg_name) %>%  ## add SDG names
+    dplyr::select(SDG_name, year, group, value_dif) %>% as.data.frame()
+  
+  
+  ### for global level
+  sdg_i_glo <- df %>% 
+    dplyr::filter(SDG_name %in% c(sdg_name)) %>%
+    dplyr::filter(scenario %in% c('rel_c', 'not_c')) %>%
+    group_by(scenario, year) %>%
+    summarise_at(.vars = names(.)[6], .funs = c(mean="mean")) %>%
+    spread(key = scenario, value = mean) %>% ## long to wide, seperate rel_c and not_c (trade and no-trade)
+    dplyr::mutate(value_dif = rel_c - not_c, 
+                  group = as.factor('glo'), 
+                  SDG_name = sdg_name) %>%  ## add SDG names
+    dplyr::select(SDG_name, year, group, value_dif) %>% as.data.frame()
+
+  
+  ### put together 
+  sdg_i <- rbind(sdg_i_dev, sdg_i_glo)
+  
+  assign(sdg_name, sdg_i)
+}
+    
+    
+
+### For composite SDG (SDGc)
+### for developed and developing group
+dif_SDGc_dev <- score_SDGc_c %>%
+  gather(key = year, value = score, 2:16) %>%
+  # dplyr::filter(SDG_name %in% c('SDG_6')) %>%
+  dplyr::filter(scenario %in% c('rel_c', 'not_c')) %>%
+  group_by(scenario, group, year) %>%
+  summarise_at(.vars = names(.)[5], .funs = c(mean="mean")) %>%
+  spread(key = scenario, value = mean) %>%
+  dplyr::mutate(value_dif = rel_c - not_c,
+                SDG_name = 'SDGc') %>%  ## add SDG names
+  dplyr::select(SDG_name, year, group, value_dif)%>% as.data.frame()
+
+### for global level
+dif_SDGc_glo <- score_SDGc_c %>%
+  gather(key = year, value = score, 2:16) %>%
+  # dplyr::filter(SDG_name %in% c('SDG_6')) %>%
+  dplyr::filter(scenario %in% c('rel_c', 'not_c')) %>%
+  group_by(scenario, year) %>%                         ### no group for "group"
+  summarise_at(.vars = names(.)[5], .funs = c(mean="mean")) %>%
+  spread(key = scenario, value = mean) %>%
+  dplyr::mutate(value_dif = rel_c - not_c,
+                group = as.factor('glo'), 
+                SDG_name = 'SDGc') %>%  ## add SDG names
+  dplyr::select(SDG_name, year, group, value_dif)%>% as.data.frame()
+
+SDGc_i <- rbind(dif_SDGc_dev, dif_SDGc_glo)
+
+  
+  
+### All data together
+# df_dif <- rbind(SDGc_i, SDG_6, SDG_7, SDG_8, SDG_9, SDG_13, SDG_15) %>% 
+#   as.data.frame()
+df_dif <- rbind(SDGc_i, SDG_6, SDG_72, SDG_73, SDG_8, SDG_9, SDG_13, SDG_151, SDG_152) %>% 
+  as.data.frame()
+
+str(df_dif)
+df_dif$year <- as.numeric(df_dif$year)
+
+
+### change the order of country groups
+unique(df_dif$group)
+df_dif$group <- factor(df_dif$group, levels=c('glo', '1', '0'))
+
+### change facet labels
+unique(df_dif$SDG_name)
+levels_sdgs
+label_targets
+# levels(df_dif$SDG_name) <- c('SDG_ct', levels_sdgs)
+df_dif$SDG_name <- factor(df_dif$SDG_name, 
+                          levels = c('SDGc', levels_sdgs), 
+                          labels = c('SDGct - Composite SDG targets', label_targets))
+levels(df_dif$SDG_name)
+
+ggplot(data = df_dif, aes(x = year, y = value_dif, color = group)) + 
+  
+  geom_line(size=0.6,alpha=0.7) +
+  scale_x_continuous(breaks = seq(1995, 2009, by = 1)) +
+  facet_wrap(~SDG_name) +
+  theme_bw() +
+  scale_fill_manual(name="",
+                    values=c("lightskyblue", ### global     - glo
+                             "royalblue1",   ### developed  - 1
+                             "chocolate1"),  ### developing - 0
+                    labels=c("Gloabl",
+                             "Developed", 
+                             "Developing"))+
+  scale_colour_manual(values=c("lightskyblue", 
+                               "royalblue1", 
+                               "chocolate1"),
+                      labels=c("All countries",
+                               "Developed", 
+                               "Developing"),
+                      name = "Country group") +
+  
+  theme(legend.position = c(0.1, 0.16), ## 0.88, 0.12
+        axis.text.x = element_text(angle=90, hjust=1, vjust = 0.5),
+        panel.grid.minor = element_blank()) +
+  geom_hline(yintercept=0,color="red1",linetype = 'dotted', alpha= 0.5)+ # dashed
+  #scale_x_continuous(breaks=seq(1995,2009,3)) +
+  #scale_x_discrete(breaks = c('1995','2000','2005', '2009')) +
+  xlab("Year") +
+  # ylim(-10, 20) +
+  ylab("Difference in SDG target scores between trade and no-trade scenarios") #+
+    #ggtitle("(b)") 
+
+getwd()
+today <- format(Sys.Date(), "%Y%m%d"); today
+fname <- paste0(dir.fig,'/Fig_S3_change_Trade_vs_noTrade_Target.jpg');fname
+ggsave(fname, last_plot(), width = 8.8, height = 6.5, units = "in",dpi = 300)
+  
+```
+
+
+
+
+
+## Figure 1bcd - maps
+
+  SDGc data for Spatial maps for Fig 1bcd
+  
+### Dataframe  
+#### .1 SDGc for each nation
+```{r }
+# get data from SDGc_c
+
+SDGc_c_gis <- data.frame(SDGc_c[,16:18], SDGc.means = rowMeans(SDGc_c[,1:15]))
+
+library(tidyr)
+SDGc_c_gis1 <- SDGc_c_gis %>% 
+  spread(key = scenario, value = SDGc.means) %>%
+  mutate(rel_not_chg0 = rel_c - not_c) %>%       ## the difference of score in trade and no-trade 
+  mutate(rel_not_chg  = replace(rel_not_chg0, rel_not_chg0 > 30, 31)) 
+  # set too big values to a certain max value for mapping purpose
+  
+hist(SDGc_c_gis1$rel_not_chg0)
+hist(SDGc_c_gis1$rel_not_chg)
+```
+
+
+
+#### .2 change value of each SDG target
+```{r }
+# remove(list = ls())
+
+path <- rstudioapi::getSourceEditorContext()$path; path
+dir  <- dirname(rstudioapi::getSourceEditorContext()$path); dir
+wdir <- paste0(dir, './update_0503_SUM_dist/_output_score')
+setwd(wdir)
+
+csvs <- list.files(pattern="^score_c_*"); csvs
+
+
+### cal the difference in trade and no-trade scenarios for each target
+# read csv as dataframe (all cols)
+for (csv in csvs){
+  score_x <- read.csv(file = csv)[, -1]
+  names(score_x) <- c('nation', seq(1995, 2009), "scenario", "group")
+  
+  socre_x_rel <- score_x %>% filter(scenario == 'rel_c')
+  socre_x_not <- score_x %>% filter(scenario == 'not_c')
+  
+  score_x_chg <- data.frame(socre_x_rel[,c('nation', 'group')],            ## add such info as two cols
+                            socre_x_rel[, 2:16] - socre_x_not[, 2:16]) %>% ## cal the difference in scores
+    mutate(chg.avg = rowMeans(.[, -1:-2]))  ## remove the first 2 cols, and cal the mean value of the difference 
+  dfname <- paste('sdg_chg_', substr(csv, 7, 13), sep='')
+  print(paste0('new  df name: ', dfname))
+  ### assign a new name to this processed dataframe and save as csvs
+  assign(dfname, score_x_chg)
+  # assign(paste('', gsub('score_|.csv', '', csv), sep=''), score_x)
+  ### save data to local
+  fname <- paste('sdg_chg_', substr(csv, 7, 13), '.csv', sep='')
+  print(paste0('new csv name: ', fname))
+  write.csv(x = score_x_chg, file = fname)
+}
+
+
+# # test code ----
+# csv <- "score_c_6_wat.csv"
+# score_x <- read.csv(file = csv)[, -1]
+# names(score_x) <- c('nation', seq(1995, 2009), "scenario", "group")
+# 
+# socre_x_rel <- score_x %>% filter(scenario == 'rel_c')
+# socre_x_not <- score_x %>% filter(scenario == 'not_c')
+# 
+# score_x_chg <- data.frame(socre_x_rel[,c('nation', 'group')], 
+#                           socre_x_rel[, 2:16] - socre_x_not[, 2:16]) %>%
+#   mutate(chg.avg = rowMeans(.[, -1:-2]))
+# # ----- #
+
+```
+
+
+
+#### .3 number of the increased/decreased SDG targets 
+
+```{r }
+
+csvs <- list.files(pattern="^sdg_chg_c_*"); csvs
+
+# start with an empty list
+sdg_chg <- list()
+# run through your loop, adding each vector to the list
+for(csv in csvs){
+  # whatever is in your loop
+  dff <- read.csv(file = csv)[,-4:-18][, -1:-3]
+  name.i <- gsub(pattern = 'sdg_chg_|.csv', replacement = '', x = csv)
+  # names(dff) <- c('nation', 'group', name.i)
+  sdg_chg[[name.i]] <- dff # result of this iteration of loop
+}
+
+# turn your list into a dataframe
+nation_group.info <- read.csv(file = csv)[,-4:-18][, 2:3]
+sdg_chg_7 <- data.frame(nation_group.info, sdg_chg)   ### all target data in one df
+
+#### count the number of [change value > 0] in these 7 sdgs
+# sdg_chg_8 <- sdg_chg_7 %>% 
+#   mutate(c_12 = c_8_mat,
+#          num = rowSums(.[3:9] > 0))
+n <- ncol(sdg_chg_7); n
+
+sdg_chg_8 <- sdg_chg_7 %>% 
+  # sdg_chg_7[1:8] %>% #################### goal level
+  mutate(c_12    = c_8_mat,         ## add SDG 12.2, which is the dsame as SDG 8.4
+         c_99    = c_99_sd) %>%     ## need to put SDGc at the end, as this one won't be counted here
+  dplyr::select(-c_99_sd) %>%       ## remove this repeat
+  ### count the number of change
+  mutate(num  = rowSums(.[3:n] >= 0), ## increase
+         num_ = rowSums(.[3:n] < 0),  ## decrease
+         mum0 = rowSums(.[3:n] == 0)) ## no change
+
+
+# test code ----
+# csv <- "sdg_chg_c_6_wat.csv" 
+# dff <- read.csv(file = csv)[,-4:-18][, -1]
+# name.i <- gsub(pattern = 'sdg_chg_|.csv', replacement = '', x = csv); name.i
+# names(dff) <- c('nation', 'group', name.i)
+```
+
+
+### Data shapefiles
+
+```{r}
+
+### merge all data together (score, score difference, score by group, count change)
+getwd()
+SDGc_c_gis2 <- merge(x = SDGc_c_gis1, y = sdg_chg_8[, -2], by = 'nation') ## remove "group" and join data
+### add score in 1995, 2009 under trade as well
+SDGc_c_gis3 <- merge(x = SDGc_c_gis2, y = SDGc_rel[, c(1,15,16)], by = 'nation') 
+
+getwd()
+fname <- 'sdg_gis_c.csv'
+write.csv(x = SDGc_c_gis3, file = fname)
+
+### shp data from files
+# library(rgdal)
+dir.shp <- paste0(dir, "/update_0503_SUM_dist/_input_data/ne_10m_admin_0_countries")
+# shp <- readOGR(dsn = dir.shp, "ne_10m_admin_0_countries")
+shp <- st_read(dsn = dir.shp, layer = "ne_10m_admin_0_countries") %>%
+  filter(NAME != 'Antarctica')
+names(shp)
+
+
+### shp data from package
+# library(rnaturalearthdata)
+# library(rnaturalearth)
+## devtools::install_github("ropensci/rnaturalearthhires")
+# shp <- map_units50 %>% st_as_sf() %>%
+#   select(name, iso_a3, economy, income_grp) %>%
+#   filter(name != 'Antarctica') #%>%
+# 
+# shp <- map_units110 %>% st_as_sf() %>%
+#   select(name, iso_a3, economy, income_grp) %>%
+#   filter(name != 'Antarctica')
+# 
+# shp <- sovereignty50 %>% st_as_sf() %>%
+#   select(name, iso_a3, economy, income_grp) %>%
+#   filter(name != 'Antarctica')
+# 
+### some iso_a3 code missing
+# shp <- ne_countries(scale = 10, returnclass = 'sf') %>% #st_as_sf() %>%
+#   select(name, iso_a3, economy, income_grp) %>%
+#   filter(name != 'Antarctica') %>%
+#   # filter(name == 'France') %>%
+#   mutate(iso_a3 = if_else(name == 'France', 'FRA', iso_a3))
+  
+
+# plot(shp[1])
+names(shp)
+# head(shp)
+
+### save the shp dataframe as xls, and modify the file in order to be able to link with the score files. 
+# getwd()
+# xls.shp <- paste0(dir, '/update_0503_SUM_dist/_input_data/ne_10m_admin_0_countries/Table/ne_10m_iso3.xlsx')
+# writexl::write_xlsx(x = shp, path = xls.shp)
+
+
+### add new country name that are consistant with names uned in SDG data
+library(readxl)
+xls.shp.info <- paste0(dir, '/update_0503_SUM_dist/_input_data/ne_10m_admin_0_countries/Table/ne_10m_admin_0_countries-Export_Output.xls')
+
+nation_new_name <- 
+  read_excel(path = xls.shp.info,
+             sheet = "dat", col_names = T) %>%
+  select(ADMIN, ADM0_A3, nation_name)
+names(nation_new_name)
+# nation_new_name <- as.data.frame(nation_new_name[,-c(3,4)])
+
+### join new name table
+str(shp$ADM0_A3)
+# str(shp$iso_a3)
+# shp$iso_a3 <- as.character(shp$iso_a3)
+shp$ADM0_A3 <- as.character(shp$ADM0_A3)
+str(nation_new_name)
+
+### make a shpefile data copy, and join with the "name table"
+shp_newName <- shp
+shp_newName <- left_join(shp_newName, nation_new_name, by=c("ADM0_A3" = "ADM0_A3"))
+names(shp_newName)
+
+temp = format(Sys.time(), "%Y_%m_%d")
+# dir_output <- 'dir_output'
+# dir_output2 <- paste('dir_output', temp, sep="_")
+# dir_output2
+# dir.create(dir_output) # create a new dir
+# writeOGR(obj=shp_newName, dsn=dir_output, layer="ne_10m_admin_0_countries_new_Name", driver="ESRI Shapefile")
+
+### join SDG data with shpefile
+csv <- './sdg_gis_c.csv'; approach = 'c'
+# csv <- './sdg_gis_b.csv'; approach = 'b'
+
+dt <- read.csv(file = csv, stringsAsFactors = F)
+str(dt)
+shp_newName_dt <- shp_newName
+shp_newName_dt <- left_join(shp_newName_dt, dt, by=c("nation_name" = "nation"))
+dim(shp_newName_dt)
+# shp_dt_view <- as.data.frame(shp_newName_dt[, 95:115]) ## 2019 code
+shp_dt_view <- shp_newName_dt                            ## 2020 code update
+# remove Antarctica
+# shp_dt <- subset(shp_newName_dt, NAME != "Antarctica") ## 2019 code
+shp_dt <- shp_newName_dt
+getwd()
+today <- format(Sys.Date(), "%Y%m%d"); today
+fname <- paste0('shp_dt_', today, '.RData'); fname
+save(shp_dt, file = fname)
+
+### distribution of data
+# data <- data.frame(value = df_range)
+# data <- data.frame(unique(data))
+# data <- data.frame(value = data)
+# ggplot(data, aes(x=value)) + geom_histogram()
+# dst_Figs <- "G:/My Drive/_paper/170923_trade_Global SDGs/results/"
+# setwd(dst_Figs)
+
+
+
+str(shp_dt_view)
+hist(shp_dt_view$rel_c)
+### set min max value
+df_min <- min(shp_dt_view$rel_c, na.rm = T); df_min
+df_max <- max(shp_dt_view$rel_c, na.rm = T); df_max 
+seq <- seq(df_min, df_max, 5); seq; length(seq)
+labels <- round(seq, digits = 0); labels
+# df_min <- min(shp_dt_view$rel_b); df_min    # rel_c = compSDGsY
+# df_max <- max(shp_dt_view$rel_b); df_max
+
+```
+
+
+
+### Map plots
+```{r packages colors and functions}
+
+# packages ----------------------------------------------------------------
+library(rnaturalearthdata)
+library(rnaturalearth)
+library(sp)
+library(sf)
+# install.packages("extrafont")
+library(extrafont)
+library(RColorBrewer)
+library(ggpubr)
+
+
+### colors
+col  <- c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA")
+col1 <- c("#7F0000", "red", "#FF7F00", "yellow", "white",
+          "cyan", "#007FFF", "blue", "#00007F")
+col2 <- c("#67001F", "#B2182B", "#D6604D", "#F4A582",
+          "#FDDBC7", "#FFFFFF", "#D1E5F0", "#92C5DE",
+          "#4393C3", "#2166AC", "#053061")
+col3 <- c("#d73027" ,'#fee08b', '#006837')
+col4 <- c("#7F0000", "red", "#FF7F00", "yellow", "#7FFF7F",
+          "cyan", "#007FFF", "blue", "#00007F")
+col5 <- c('#d73027', '#f46d43', '#fdae61', '#fee08b', '#d9ef8b', 
+          '#a6d96a', '#66bd63', '#1a9850', '#006837')
+# http://colorbrewer2.org/#type=diverging&scheme=RdYlGn&n=10
+
+
+
+### theme, font ------------------------------------------------------------------ #
+map_theme <- ggpubr::theme_transparent()+
+  theme(axis.title.x=element_blank(),
+                 axis.title.y=element_blank(),
+                 axis.text.x=element_blank(),
+                 axis.ticks = element_blank(),
+                 panel.grid.major = element_blank(),
+                 panel.grid.minor = element_blank(),
+                 panel.border = element_blank(),
+                 legend.position = c(0.09, 0.38),
+                 legend.key.size = unit(0.2, "cm"),
+                 # legend.key = element_rect(fill = "transparent", colour = "transparent"), 
+                 legend.key = element_rect(fill = NA, colour = NA, size = 0.25),
+                 
+                 # legend.box.background = element_blank(),
+                 # legend.background = element_rect(color = NA),
+                 # legend.background = element_blank(), 
+                 
+                 panel.background = element_rect(fill = "transparent", colour = NA),
+                 plot.background = element_rect(fill = "transparent", colour = NA),
+                 legend.background = element_rect(fill = "transparent", colour = NA),
+                 legend.box.background = element_rect(fill = "transparent", colour = NA),
+                 
+                 text=element_text(family=font, size=font_size))
+  
+
+### Plot Function ---------------------------------------------------------------------- #
+function_map_fig1 <- function(data, var, brks, lables, colors, legend.title){
+  
+  p <- ggplot(data = data) + 
+     geom_sf(aes(fill = var), color='gray50', size=0.01) + theme_bw() + 
+     
+     # scale_fill_gradientn(colors=colors,
+     #                      breaks=brks,
+     #                      labels=labels,
+     #                      # limits=c(df_min,df_max),
+     #                      na.value ='gray70') +
+     
+     scale_fill_manual(values = colors, 
+                       # breaks = breaks,
+                       labels = labels) +
+     guides(fill = guide_legend(label.hjust = 0, label = T, 
+                                reverse = T, title = legend.title))+
+     map_theme
+  
+  # return(p)
+  ## save plot as jpg
+  # pname <- paste0(dir.fig, '/map_', filename, '.jpg')
+  # ggsave(filename = pname, plot = p, width = 6, height = 5, units = 'in', dpi = 300)
+  # return(p)
+}
+
+# ref: https://www.r-spatial.org/r/2018/10/25/ggplot2-sf-3.html
+```
+
+
+
+#### fig_1b
+```{r}
+# load data
+getwd()
+rdata.ls <- list.files(path = './', pattern = '^shp_dt_2020.*.RData$'); rdata.ls; length(rdata.ls)
+rdata <- rdata.ls[length(rdata.ls)]; rdata
+load(paste0(wdir, '/', rdata))
+
+
+# fig_1b ------------------------------------------------------------------
+legend.title = 'Score'
+data <- shp_dt
+var <- data$rel_c
+
+library(classInt)
+min <- floor(min(var, na.rm = T)/5.0)*5;   min
+max <- ceiling(max(var, na.rm = T)/5.0)*5; max 
+
+### we plan to have 9 breaks, 8 labels, 8 colors -------------------------
+breaks <- seq(min, max, 5); breaks; length(breaks) ## we plan to have 9 breaks, if bigger, reduce the number
+# colors <- col5; length(colors)
+# breaks <- breaks[-c(length(breaks)-1)]; breaks; length(breaks) ## modify the breaks
+
+is <- seq(1,length(breaks)-1, 1); is
+# is <- seq(1,length(breaks), 1); is
+labels <- c()
+for (i in is) {
+  # print(breaks[i])
+  bk <- paste0(breaks[i], ' – ', breaks[i+1]); print(bk)
+  labels <- c(labels, bk)
+}
+labels
+breaks
+length(breaks)
+length(labels)
+
+### create colors
+colors <- c(
+  ## greens: https://colorbrewer2.org/#type=sequential&scheme=YlGn&n=9
+  '#ffffe5',
+  # '#f7fcb9',
+  '#d9f0a3',
+  '#addd8e',
+  '#78c679',
+  '#41ab5d',
+  '#238443',
+  '#006837',
+  '#004529'
+)
+
+# colors <- colors[length(colors):1] # reorder colors
+colors
+
+### for Fig S1 ---------------------------------------------- #
+breaks_1b <- breaks
+labels_1b <- labels
+colors_1b <- colors
+### --------------------------------------------------------- #
+
+
+### double-check the numbers
+length(breaks)
+length(labels)
+length(colors)
+
+### 
+data$brks <- cut(var, breaks=breaks, labels=labels)
+levels(data$brks)
+str(data$brks)
+head(data)
+# fig1b <- function_map_fig1(data = data, var=data$brks, brks=breaks, lables = lables, colors = colors, legend.title = legend.title)
+
+fig1b <- ggplot(data = data) + 
+     geom_sf(aes(fill = brks), color='gray50', size=0.01) + theme_bw() + 
+     scale_fill_manual(values = colors, 
+                       labels = labels) +
+     guides(fill = guide_legend(label.hjust = 0, label = T, 
+                                reverse = T, title = legend.title))+
+     map_theme
+# fig1b
+
+# fname <- paste0(dir.fig, '/Fig_1bcd.pdf'); fname
+# ggsave(fname, fig1b, width = 18, height = 9, units = 'cm', limitsize = FALSE, 
+#        bg = "transparent")
+```
+
+
+#### fig_1c
+```{r}
+# fig_1c ------------------------------------------------------------------
+legend.title <- 'Impacts on\nscore'
+var <- data$rel_not_chg
+
+library(classInt)
+# intv <- classIntervals(data$rel_not_chg, n = 6, style = 'equal'); intv#can use "jenks" but is very slow
+# intv$brks
+### create breaks
+min <- floor(min(var,   na.rm = T)/5.0)*5; min
+max <- ceiling(max(var, na.rm = T)/5.0)*5; max 
+breaks <- seq(min, max, 5); breaks
+# breaks <- breaks[c(1:6, 10)];  breaks ## modify the breaks
+breaks <- breaks[-c(length(breaks)-1)]; breaks; length(breaks) ## modify the breaks
+
+
+### create labels
+is <- seq(1,length(breaks)-1, 1); is
+labels <- c()
+for (i in is) {
+  # print(breaks[i])
+  bk <- paste0(breaks[i], ' – ', breaks[i+1]); print(bk)
+  labels <- c(labels, bk)
+}
+labels
+breaks
+
+### process data for plot
+data$brks <- cut(data$rel_not_chg, breaks=breaks, labels=labels)
+
+
+### create colors
+colors <- c(
+  ## brown
+  '#feb24c',
+  '#ffeda0',
+  
+  ## blues
+  '#eff3ff',
+  '#c6dbef',
+  # '#9ecae1',
+  '#6baed6',
+  '#4292c6',
+  '#2171b5',
+  '#084594'
+)
+
+
+
+### for Fig S1 ---------------------------------------------- #
+breaks_1c <- breaks
+labels_1c <- labels
+colors_1c <- colors
+min_1c <- min
+max_1c <- max
+### --------------------------------------------------------- #
+
+
+length(breaks)
+length(labels)
+length(colors)
+
+
+
+### plot
+# fig1c <- function_map_fig1(data = data, var=data$brks, brks=breaks, 
+#                            lables=lables, colors = colors, legend.title)
+fig1c <- ggplot(data = data) + 
+     geom_sf(aes(fill = brks), color='gray50', size=0.01) + theme_bw() + 
+     scale_fill_manual(values = colors, 
+                       labels = labels) +
+     guides(fill = guide_legend(label.hjust = 0, label = T, 
+                                reverse = T, title = legend.title))+
+     map_theme
+# fig1c
+```
+
+
+#### fig_1d
+```{r}
+# fig_1d ------------------------------------------------------------------
+
+legend.title = 'Number of\nincreased targets'
+data <- shp_dt
+var <- data$num
+
+# num_sdgs <- 7  ### Goal level
+max(data$num)
+max(data$num_)
+
+num_sdgs <- 9  ### Target level
+data$brks <- as.factor(data$num); levels(data$brks)
+# breaks <- seq(0,num_sdgs,1); breaks
+breaks <- sort(unique(data$num)); breaks; 
+labels <- breaks
+
+length(levels(data$brks))
+print(paste0('number of breaks: ', length(breaks)))
+print(paste0('number of labels: ', length(labels)))
+
+library(RColorBrewer)
+
+plotvar <- var
+nclr <- num_sdgs + 1; nclr
+clr <- brewer.pal(8,"Blues")
+plotclr <- colorRampPalette(clr)(nclr)
+
+# plotclr <- plotclr[nclr:1] # reorder colors
+class <- classIntervals(plotvar, nclr, style="equal") ## ignore the warnings
+colcode <- findColours(class, plotclr)
+colors <- attr(colcode, "palette"); colors
+print(paste0('number of colors: ', length(colors)))
+
+fig1d <- function_map_fig1(data, var=data$brks, brks=breaks, lables=lables, colors = colors, legend.title)
+fig1d
+```
+
+
+
+#### fig_1e
+```{r}
+# fig_1d2 -----------------------------------------------------------------
+legend.title = 'Number of\ndecreased targets'
+data <- shp_dt
+var <- data$num_
+
+data$brks <- as.factor(data$num_)
+# breaks <- seq(0,num_sdgs,1);      breaks; length(breaks)
+breaks <- sort(unique(data$num_)); breaks; length(breaks)
+data$brks <- as.factor(data$num_); levels(data$brks); length(levels(data$brks))
+labels <- breaks
+
+
+print(paste0('number of breaks: ', length(breaks)))
+print(paste0('number of labels: ', length(labels)))
+
+
+library(RColorBrewer)
+
+plotvar <- var
+nclr <- num_sdgs + 1
+clr <- brewer.pal(8,"Oranges")
+plotclr <- colorRampPalette(clr)(nclr)
+# plotclr <- plotclr[nclr:1] # reorder colors
+class <- classIntervals(plotvar, nclr, style="equal")
+colcode <- findColours(class, plotclr)
+colors <- attr(colcode, "palette"); colors
+print(paste0('number of colors: ', length(colors)))
+
+fig1d2 <- function_map_fig1(data, var=data$brks, brks=breaks, 
+                            lables = lables, colors = colors, legend.title)
+# fig1d2
+```
+
+
+
+
+## --- Desc SDG change for the 1st Results
+```{r}
+
+### SDGc score change over years in current world
+sdg_change_over_yr <- fig.1a.dt %>%
+  dplyr::mutate(year = gsub('_sum', '', variable),
+         year = as.numeric(as.character(year))) %>%
+  filter(group_scenario == 'glo_rel')
+sdgc_1995 <- sdg_change_over_yr %>% filter(year == 1995)
+sdgc_2009 <- sdg_change_over_yr %>% filter(year == 2009)
+
+print(paste0('SDGc score in 1995: ', round(sdgc_1995$value, digits = 1)))
+print(paste0('SDGc score in 2009: ', round(sdgc_2009$value, digits = 1)))
+
+print(paste0('SDGc score SD in 1995: ', round(sd(SDGc_rel$`1995`), digits = 1)))
+print(paste0('SDGc score sd in 1995: ', round(sd(SDGc_rel$`2009`), digits = 1)))
+
+### top ranking countris ------------------------------------------------------------- #
+names(shp_dt)
+rank <- shp_dt %>% 
+  dplyr::select(NAME_LONG, CONTINENT, SUBREGION, nation_name, group:X2009) %>% ## names_gis[2:21]
+  st_drop_geometry() %>%
+  dplyr::distinct(nation_name, .keep_all = TRUE)  %>% 
+  dplyr::arrange(desc(rel_c))
+
+rank %>%
+  ggplot() +
+  geom_col(aes(x = reorder(NAME_LONG, rel_c), y = rel_c, fill = CONTINENT)) +
+  coord_flip() +
+  theme_bw()
+
+fname <- paste0(dir.fig, '/Fig_10_SDGc score ranking.jpg'); fname
+ggsave(fname, last_plot(), width = 6, height = 7, units = 'in', limitsize = FALSE, 
+       bg = "transparent")
+
+
+### map of nations that have data; not including the rest of world
+nations_have_data <- shp_dt %>%
+  ungroup() %>%
+  st_drop_geometry() %>%
+  dplyr::distinct(nation_name) %>%
+  dplyr::filter(nation_name != 'ROW') 
+
+nations_have_data_shp <- 
+  merge(x = shp_newName, y = nations_have_data, by = 'nation_name', all.y = T) 
+
+ggplot() +
+  geom_sf(data = shp_dt, aes(), fill = "transparent", show.legend = F) +
+  geom_sf(data = nations_have_data_shp, aes(), fill = 'green', show.legend = F) +
+  theme_nothing()
+fname <- paste0(dir.fig, '/Fig_11_map_nations_with_data.jpg'); fname
+ggsave(fname, last_plot(), width = 6, height = 3, units = 'in', limitsize = FALSE, 
+       bg = "transparent")
+
+```  
+
+
+## --- Source Data for Fig 1
+```{r}
+### save Fig 1a data to excel ---------------------------------------------------
+wdir
+SourceData_Fig_1a <- fig.1a.dt %>% select(-variable)
+names(SourceData_Fig_1a) <- c("Scenario", "Score", "Year")
+
+fname <- paste0(wdir, '/SourceData_Fig_1a.xlsx'); fname
+writexl::write_xlsx(x = SourceData_Fig_1a, path = fname)
+
+
+
+### save Fig 1bcd data to excel ---------------------------------------------------
+# names(shp_dt)
+SourceData_Fig_1bcd <- shp_dt %>% 
+  dplyr::select(nation_name, 
+                # NAME_LONG, CONTINENT, SUBREGION, 
+                group:X2009) %>% ## names_gis[2:21]
+  dplyr::select(-c(rel_not_chg, mum0))%>%
+  st_drop_geometry() %>%
+  # dplyr::rename(Score_1995 = X1995, Score_2009 = X2009) %>%
+  dplyr::distinct(nation_name, .keep_all = TRUE)
+
+names(SourceData_Fig_1bcd) <- c(
+  "Name", "Group_income", "Score_dst", "Score_ner", "Score_not", "Score_rel", "Dif_score_rel_not",
+  "Dif_score_132", "Dif_score_151", "Dif_score_152", "Dif_score_64", "Dif_score_72", "Dif_score_73", 
+  "Dif_score_84",  "Dif_score_94",  "Dif_score_122", "Dif_score_composite", 
+  "Num_target_increase", "Num_target_decrease", 'Score_1995', 'Score_2009')
+SourceData_Fig_1bcd$Group_income <- mapvalues(SourceData_Fig_1bcd$Group_income,
+                                               from = 0:1, 
+                                               to   = c('Developing', 'Developed'))
+fname <- paste0(wdir, '/SourceData_Fig_1bcd.xlsx'); fname
+writexl::write_xlsx(x = SourceData_Fig_1bcd, path = fname)
+```
+
+## Figure 1abcd in 1
+
+  
+
+### ggplot
+```{r }
+
+### Figure 1 b, c, d (maps in one)
+library(ggpubr)
+fig1bcd <- ggarrange(
+  fig1b, fig1d, fig1c, fig1d2,
+  nrow = 2, ncol = 2, labels = c('b', 'd', 'c', 'e'),
+  font.label = list(size = 7), align = 'v', common.legend = F) 
+
+fname <- paste0(dir.fig, '/Fig_1bcd.pdf'); fname
+# ggsave(fname, fig1bcd, width = 18, height = 9, units = 'cm', limitsize = FALSE, bg = "transparent")
+
+
+
+### all in one
+fig1 <- ggarrange(
+  ggarrange(fig1a, NULL, 
+            ncol = 2, nrow = 1, labels = c('a', ''), align = 'h', font.label = list(size = 7)), 
+  fig1bcd, 
+  nrow = 2, ncol = 1, heights = c(1,1), align = 'v', font.label = list(size = 7))
+
+
+
+fname <- paste0(dir.fig, '/Fig_1_v0528.pdf'); fname
+ggsave(fname, fig1, width = 18, height = 8+9, units = 'cm', limitsize = FALSE, 
+       bg = "transparent")
+```
+
+### tmap (not use for 2020 revision)
+```{r eval=FALSE, include=FALSE}
+
+## save as png
+temp = format(Sys.time(), "%Y%m%d")
+getwd()
+filename <- paste0(dir.fig, '/Fig.1bcd_', approach, '_', temp, '.pdf'); filename
+# png(filename = filename, 
+#     units="in", 
+#     width=6, height=9, 
+#     pointsize=12, res=300)
+
+pdf(file = filename, width = 180, height = 180, paper = 'a4')
+
+# par(mfrow = c(3, 1))
+# ----- fig 1b: SDG map under trade
+(fig_1b <- tm_shape(shp_dt) + 
+  tm_add_legend(type = "fill", 
+                labels=c('Low', '', '','', '', '', '', '', 'High'),
+                col = col5,
+                lwd = 0.01,
+                border.col = 'grey',
+                border.lwd = 0.01,
+                border.alpha = 0.1,
+                #title = "aa", 
+                is.portrait = TRUE,
+                reverse = T) +
+  tm_fill(paste0('rel_', approach), 
+          style="pretty", # 'pretty', 'jenks', 'quantile', 'cat'
+          n = 6,   # number of breaks
+          palette=col3, # 'RdYlGn', 
+          #col = 'compSDGsY',
+          #midpoint = 'white',
+          legend.show = F,
+          stretch.palette = TRUE
+          # labels=c('Low', '', '','',
+          #          '', '', '', '', 'High')
+          )  + 
+  tm_borders(col = "grey", lwd = 0.1, lty = "solid", alpha = 0.99) +
+  #tm_legend(outside = F, text.size = .8) +
+  tm_layout(#title = '(b)', 
+            frame = F, frame.lwd = 0.1,
+            #legend.show = F,
+            legend.position = c("left","BOTTOM"),
+            #legend.position = c('RIGHT','BOTTOM'),
+            # legend.outside = T,
+            # legend.outside.position = "bottom",
+
+            legend.stack = "horizontal",
+            legend.title.size = 0.01,
+            main.title = 'b')
+)
+# fig_1b
+
+
+
+
+# ----- fig 1c: SDG change map, compare trade and no-trade scenario
+fig_1c <- tm_shape(shp_dt) + 
+  tm_fill("rel_not_chg", # rel_not_chg = compSDGsChg
+          style="pretty", # pretty
+          breaks=c(-Inf, -30, -20, -10, 00, 10, 20, 30, Inf),
+          #labels=c("under 5", "5 to 10", '10-15', "above 15"),
+          legend.format = list(text.separator = '~', 
+                               #scientific=TRUE,
+                               text.align = 'left'), # "left", "center" or "right"
+          
+          palette=col1, # 'RdYlGn', 
+          #legend.show = F,
+          stretch.palette = TRUE
+          # labels=c('Low', '', '','',
+          #          '', '', '', '', 'High')
+  )  + 
+  tm_borders(col = "grey", lwd = 0.1, lty = "solid", alpha = 0.99) +
+  #tm_legend(outside = F, text.size = .8) +
+  tm_layout(#title = '(b)', 
+    frame = F, frame.lwd = 0.1,
+    #legend.show = F,
+    legend.position = c("left","BOTTOM"),
+    legend.stack = "horizontal",
+    legend.title.size = 0.01,
+    main.title = 'c')
+# fig_1c
+
+
+
+# ----- fig 1d: Number of increase or decreased SDGs
+fig_1d <- tm_shape(shp_dt) + 
+  tm_fill("num", # num = Num Of Increased SDGs
+          style="cat", 
+          title = 'Number of SDGs \nwith increased scores',
+          legend.format = list(text.separator = '~', 
+                               #scientific=TRUE,
+                               text.align = 'left'), # "left", "center" or "right"
+          palette='Blues', # 'RdYlGn', 
+          #legend.show = F,
+          stretch.palette = TRUE)  + 
+  tm_borders(col = "grey", lwd = 0.1, lty = "solid", alpha = 0.99) +
+  tm_layout(#title = '(b)', 
+    frame = F, frame.lwd = 0.1,
+    #legend.show = F,
+    legend.position = c("left","BOTTOM"),
+    legend.stack = "horizontal",
+    legend.title.size = 0.9,
+    main.title = 'd')
+# fig_1d
+
+
+
+## Number of decreased SDGs
+fig_1e <- tm_shape(shp_dt) + 
+  tm_fill("num_", # num = Num Of Increased SDGs
+          style="cat", 
+          title = 'Number of SDGs \nwith decreased scores',
+          legend.format = list(text.separator = '~', 
+                               #scientific=TRUE,
+                               text.align = 'left'), # "left", "center" or "right"
+          palette='Oranges', # 'RdYlGn', 
+          #legend.show = F,
+          stretch.palette = TRUE)  + 
+  tm_borders(col = "grey", lwd = 0.1, lty = "solid", alpha = 0.99) +
+  tm_layout(#title = '(b)', 
+    frame = F, frame.lwd = 0.1,
+    #legend.show = F,
+    legend.position = c("left","BOTTOM"),
+    legend.stack = "horizontal",
+    legend.title.size = 0.9,
+    main.title = ' ')
+fig_1e
+
+
+### draw all 3 maps on one page and save as png
+current.mode <- tmap_mode("plot")
+tmap_arrange(fig_1b, 
+             fig_1c,
+             fig_1d,
+             fig_1e,
+             ncol = 2, nrow = 2)
+tmap_mode(current.mode)
+
+dev.off()
+
+# ref: https://stackoverflow.com/questions/32890762/how-to-manipulate-tmap-legend?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+
+```
+
+
+
+
+## Figure S4 - Each SDG' change map
+
+  Figure 1 shows the composite SDG chang map, and it is also good to know what are the spatial differences in each SDG's change comparing the two trade scenarios.
+
+```{r}
+names(shp_dt)
+
+### Goal level
+# sdgs_list <- c("c_6_wat", "c_7_ene", "c_8_mat", "c_9_co2", "c_13_co", "c_15_fo")
+# title_list <- c('SDG 6', 'SDG 7', 'SDG 8/12', 'SDG 9',
+#                 # '(e)SDG12', 
+#                 'SDG 13', 'SDG 15')
+
+
+### Target level
+sdgs_list  <- c("c_6_wat", "c_72_en", 'c_72_en', "c_8_mat",      "c_9_co2", 
+                "c_13_co", "c_151_f", 'c_152_f')
+title_list <- c('SDG 6.4', 'SDG 7.2', 'SDG 7.3', 'SDG 8.4/12.2', 'SDG 9.4',
+                # '(e)SDG12', 
+                'SDG 13.2', 'SDG 15.1', 'SDG 15.2')
+
+### save as png 
+timestamp = format(Sys.time(), "%Y%m%d"); timestamp
+fig_name = paste0(dir.fig, '/Fig_S4_maps_each_SDG_chg_Target.jpg'); fig_name
+
+jpeg(filename = fig_name, 
+    width=7, height=6, units="in", pointsize=18, res=300)
+
+breaks_1c
+colors_1c[1:6]  ### orange --> blue
+
+col_tmap <- c('#f46d43', colors_1c[1:6]); col_tmap
+
+tm_shape(shp_dt) +
+  tm_fill(sdgs_list,          # tm_polygons; tm_fill
+          palette = col_tmap, #col1,
+          style = "fixed",
+         
+          # breaks=c(-Inf, -20, -10, 00, 10, 20, Inf),
+          # labels = c("< 20", "[-20, -10]", "(-10, 0)", "[0, 10)", "[10, 20]", "> 20"), 
+          
+          breaks=c(-Inf, -10, -5, 0, 5, 10, 20, Inf),
+          labels = c("< -10", "[-10, -5]", "(-5, 0)", "[0, 5)", "[5, 10]", "(10, 20]", "> 20"), 
+          
+          
+          # showNA = F, textNA = NA, colorNA = NULL,
+          
+          title = title_list,
+          legend.reverse = T) +
+  tm_borders(col = "grey", lwd = 0.1, lty = "solid", alpha = 0.99) +
+  tm_layout(frame = T, frame.lwd = 0.1,
+    legend.position = c(0,0),
+    legend.title.size = 0.9,
+    legend.text.size  = 0.6,
+    
+    # legend.format = list(text.less.than = '<', text.or.more = "<",
+    #                      text.separator = "~"),
+    legend.width = -0.7,
+    legend.height = -0.7,
+    
+    panel.show = F)
+  #tm_facets(free.scales=FALSE, free.coords=FALSE)
+
+dev.off()
+
+```
+
+
+
+## Figure S1 - Maps of SDG scores and change
+
+### - Map - ggplot
+```{r}
+today <- format(Sys.Date(), "%Y%m%d"); today
+names(shp_dt)
+
+sf <- st_as_sf(shp_dt) %>% dplyr::select(-c(11:95)) %>%
+  dplyr::mutate(dif2009_1995 = X2009 - X1995)
+names(sf)
+
+
+font_size_si <- 12
+map_theme_si <- ggpubr::theme_transparent()+
+  theme(axis.title.x=element_blank(),
+                 axis.title.y=element_blank(),
+                 axis.text.x=element_blank(),
+                 axis.ticks = element_blank(),
+                 panel.grid.major = element_blank(),
+                 panel.grid.minor = element_blank(),
+                 panel.border = element_blank(),
+                 legend.position = c(0.09, 0.38),
+                 legend.key.size = unit(0.2, "cm"),
+                 legend.key = element_rect(fill = NA, colour = NA, size = 0.25),
+                 panel.background = element_rect(fill = "transparent", colour = NA),
+                 plot.background = element_rect(fill = "transparent", colour = NA),
+                 legend.background = element_rect(fill = "transparent", colour = NA),
+                 legend.box.background = element_rect(fill = "transparent", colour = NA),
+                 
+                 text=element_text(family=font, size=font_size_si))
+
+
+min1 <- floor(min(sf$X1995, na.rm = T)/5.0)*5;   min1
+max1 <- ceiling(max(sf$X1995, na.rm = T)/5.0)*5; max1 
+min2 <- floor(min(sf$X2009, na.rm = T)/5.0)*5;   min2
+max2 <- ceiling(max(sf$X2009, na.rm = T)/5.0)*5; max2
+min  <- min(min1, min2); min
+max  <- max(max1, max2); max
+
+breaks <- seq(min, max, 5); breaks; length(breaks) ## we plan to have 9 breaks, if bigger, reduce the number
+
+is <- seq(1,length(breaks)-1, 1); is
+# is <- seq(1,length(breaks), 1); is
+labels <- c()
+for (i in is) {
+  bk <- paste0(breaks[i], ' – ', breaks[i+1]); print(bk)
+  labels <- c(labels, bk)
+}
+
+labels
+breaks
+
+### create colors
+colors <- c(
+  '#f7fcf0', ## 50 -55
+  colors_1b
+)
+
+
+
+p1995<- 
+  ggplot(data = sf) + 
+    geom_sf(aes(fill = X1995), color='gray50', size=0.01) + theme_bw() + 
+    scale_fill_gradientn(colors=colors, breaks=breaks, na.value ='gray60', limits=c(min,max)) +
+    guides(fill = guide_legend(label.hjust = 1, label = T, 
+                               reverse = T, title = 'Score\n1995')) + map_theme_si
+p2009 <- 
+  ggplot(data = sf) + 
+    geom_sf(aes(fill = X2009), color='gray50', size=0.01) + theme_bw() + 
+    scale_fill_gradientn(colors=colors, breaks=breaks, na.value ='gray60', limits=c(min,max)) +
+    guides(fill = guide_legend(label.hjust = 1, label = T,
+                               reverse = T, title = 'Score\n2009')) + map_theme_si
+
+
+### c 
+min1 <- floor(min(sf$dif2009_1995, na.rm = T)/5.0)*5;   min1
+max1 <- ceiling(max(sf$dif2009_1995, na.rm = T)/5.0)*5; max1 
+min <- min(min_1c, min1); min
+max <- max(max_1c, max1); max
+
+pchange <- 
+  ggplot(data = sf) + 
+    geom_sf(aes(fill = dif2009_1995), color='gray50', size=0.01) + theme_bw() + 
+    scale_fill_gradientn(colors=colors_1c, breaks=breaks_1c, na.value ='gray60', limits=c(min,max)) +
+    guides(fill = guide_legend(label.hjust = 1, label = T,
+                               reverse = T, title = 'Score\nchange')) + map_theme_si
+
+### d
+sf$num   <- as.factor(sf$num)
+sf$group <- as.factor(sf$group)
+
+
+levels(sf$group)
+levels(sf$group) <- c('Developing', 'Developed')
+col_group = c("chocolate1", "royalblue1")
+
+pgroup <- 
+  ggplot() + 
+    geom_sf(data = sf,
+            aes(fill = group),    ## set color for each unit
+            size = 0.01,          ## bordor size
+            show.legend =  T, 
+            color = 'gray') +    
+    scale_fill_manual(values = col_group) +
+    # scale_fill_brewer() +
+    guides(fill = guide_legend(reverse=T)) + theme_bw() +  map_theme_si +
+    labs(fill = 'Group') +  xlab('')
+ps1 <- 
+  plot_grid(p1995, p2009, pchange, pgroup, 
+            labels = 'auto', rel_widths = c(1,1,1,1), 
+            ncol = 2, nrow = 2, align = "hv")
+
+fname <- paste0(dir.fig, '/Fig_S1_SDGc_scores_Target.jpg'); fname
+save_plot(filename = fname, plot = ps1, ncol = 2, nrow = 2, 
+          base_width = 6.5, base_height = 2.5, units = "in")
+
+```
+
+### - Map - tmap
+
+```{r eval=FALSE, include=FALSE}
+
+color_scale <- scale_colour_gradient2(
+  low = "#f7fcf5",  ## blue - #d7191c
+  mid  = '#74c476', #"white" -#ffffbf
+  high = '#00441b', ## red  - #2c7bb6
+  midpoint = 50, space = "Lab",
+  limits=c(0, 100),
+  breaks = seq(0, 100, 20),
+  na.value = "grey50",
+  guide = "colourbar",
+  # "colourbar" for continuous colour bar, or "legend" for discrete colour legend
+  aesthetics = "fill")
+
+
+maptheme <- ggpubr::theme_transparent()+
+  theme(axis.title.x=element_blank(),
+  axis.title.y=element_blank(),
+  axis.text.x=element_blank(),
+  axis.ticks = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank())        
+
+         
+ps4_1995 <- ggplot() + 
+  geom_sf(data = sf,
+          aes(fill = X1995),    ## set color for each unit
+          size = 0.01,          ## bordor size
+          show.legend =  T, 
+          color = 'gray'        ## border color
+  ) +      
+  color_scale +
+  guides(fill = guide_colourbar(reverse = F))+
+  
+  # guides(fill = guide_legend(
+  #   # override.aes = list(size=5), 
+  #   reverse = T))+
+  
+  theme_bw() +
+  maptheme +
+  labs(fill = 'SDGct score\n1995') +        ## change 
+ 
+  # ylab('') +
+  xlab('')
+ps4_1995  
+
+
+ps4_2009 <- 
+ggplot() + 
+  geom_sf(data = sf,
+          aes(fill = X2009),    ## set color for each unit
+          size = 0.01,          ## bordor size
+          show.legend =  T, 
+          color = 'gray'        ## border color
+  ) +    
+  color_scale +
+  
+  guides(fill = guide_colourbar(reverse = F))+
+  
+  ### seperate box bars
+  # guides(fill = guide_legend(
+  #   # override.aes = list(size=5), 
+  #   reverse = T))+
+  
+  ## reverse legend order, if using color, then replace 'fill' with 'colour'
+  theme_bw() +
+  maptheme +
+  labs(fill = 'SDGct score\n2009') + 
+  # ylab('') +
+  xlab('')
+
+
+ps4_dif <- 
+ggplot() + 
+  geom_sf(data = sf,
+          aes(fill = dif2009_1995),    ## set color for each unit
+          size = 0.01,          ## bordor size
+          show.legend =  T, 
+          color = 'gray'        ## border color
+  ) +    
+  scale_colour_gradient2(low = "#f0f9e8", 
+                         # mid = '#f0f9e8', #"white",
+                         high = '#0868ac', 
+                         space = "Lab", 
+                         limits=c(0, 40),
+                         breaks = seq(0, 40, 10),
+                         na.value = "grey50", 
+                         guide = "colourbar", 
+                         # "colourbar" for continuous colour bar, or "legend" for discrete colour legend
+                         aesthetics = "fill") +
+  guides(fill = guide_legend(reverse=T)) +
+  theme_bw() +
+  maptheme +
+  labs(fill = 'SDGct score\nchange') +        ## change 
+ 
+  # ylab('') +
+   xlab('')
+
+
+sf$num <- as.factor(sf$num)
+sf$group <- as.factor(sf$group)
+
+
+levels(sf$group)
+levels(sf$group) <- c('Developing', 'Developed')
+col_group = c("chocolate1", "royalblue1")
+## save as Rdata
+getwd()
+# save(sf, file="sf_map_Data.RData")
+# load(file = "sf_map_Data.RData")
+
+ps4_group <- ggplot() + 
+  geom_sf(data = sf,
+          aes(fill = group),    ## set color for each unit
+          size = 0.01,          ## bordor size
+          show.legend =  T, 
+          color = 'gray'        ## border color
+  ) +    
+  scale_fill_manual(values = col_group) +
+  # scale_fill_brewer() +
+  guides(fill = guide_legend(reverse=T)) +
+  theme_bw() +
+  maptheme +
+  labs(fill = 'Group') +        ## change 
+ 
+  # ylab('') +
+  xlab('')
+
+plot_grid(ps4_1995, ps4_2009, ps4_dif, ps4_group, 
+          labels = 'auto', rel_widths = c(1,1,1,1), 
+          ncol = 2, nrow = 2, align = "hv")
+
+# fname <- paste0(dir.fig, '/Fig_S4_', today, '.jpg'); fname
+# ggsave(filename = fname, plot = last_plot(), width = 8, height = 4, units = "in", dpi = 300) 
+
+fname <- paste0(dir.fig, '/Fig_S4_SDGc_scores_Target.jpg'); fname
+save_plot(filename = fname, plot = last_plot(), ncol = 2, nrow = 2, 
+          base_width = 6.5, base_height = 2.5, units = "in")
+
+```
+
+
+## Figure 2a, 2b - Compare SDG change over time by income group
+
+  We compare the *temporal change* of SDGs in developed countries and developing countries. Countries are divided into two groups by GDP per capita.
+
+### Data preparation for 2ab, 3b
+#### .1. equal weight
+```{r }
+sdgc_rel_bygroup.w1 <- SDGc_rel %>% group_by(group) %>%
+  summarise_at(.vars = names(.)[1:15], .funs = c(mean="mean"))%>%
+  mutate(scenario='rel')
+sdgc_not_bygroup.w1 <- SDGc_not %>% group_by(group) %>%
+  summarise_at(.vars = names(.)[1:15], .funs = c(mean="mean"))%>%
+  mutate(scenario='not')
+sdgc_ner_bygroup.w1 <- SDGc_ner %>% group_by(group) %>%
+  summarise_at(.vars = names(.)[1:15], .funs = c(mean="mean"))%>%
+  mutate(scenario='ner')
+sdgc_dst_bygroup.w1 <- SDGc_dst %>% group_by(group) %>%
+  summarise_at(.vars = names(.)[1:15], .funs = c(mean="mean"))%>%
+  mutate(scenario='dst')
+
+### for figure 2a and 2b (the same input data), including rel_bygroup, not_bygroup  -----
+bygroup_relnot.w1 <- rbind(sdgc_rel_bygroup.w1,
+                           sdgc_not_bygroup.w1) %>%
+  as.data.frame() %>%
+  # create new col
+  mutate(group_scenario = paste(group, scenario, sep = '_')) %>%
+  dplyr::select(group_scenario, paste0(seq(1995, 2009), '_mean')) %>%
+  # wide table to long table
+  melt(. , id = 'group_scenario') %>%    # items in id will not be changed
+  # create new col using number-year
+  mutate(year = as.factor(gsub('_mean|_sum', '', variable)))
+
+fig2.dt.w1 <- rbind(glo_relnot_w1, 
+                    bygroup_relnot.w1)
+
+
+### for figure 3b, including not_bygroup, ner_bygroup, dst_bygroup -----
+sdgc.bygroup.notnerdst.w1 <- rbind(sdgc_not_bygroup.w1,
+                                   sdgc_ner_bygroup.w1,
+                                   sdgc_dst_bygroup.w1) %>%
+  as.data.frame() %>%
+  # create new col
+  mutate(group_scenario = paste(group, scenario, sep = '_')) %>%
+  dplyr::select(group_scenario, paste0(seq(1995, 2009), '_mean')) %>%
+  # wide table to long table
+  melt(. , id = 'group_scenario') %>%    # items in id will not be changed
+  # create new col using number-year
+  mutate(year = as.factor(gsub('_mean|_sum', '', variable))) %>%
+  dplyr::select(group_scenario, year, value)
+
+```
+
+
+
+#### .2. pop weight
+```{r }
+# import function  
+source(paste0(dir, "/_function_Global_SDG_bygroup.R"))
+load(file = paste0(dir.input, "/pop_data.RData"))
+
+library(stringr)
+# cal 
+sdg_rel_bygroup.wpop <- Global_SDG_bygroup_fun(SDGc_rel, pop)
+sdg_not_bygroup.wpop <- Global_SDG_bygroup_fun(SDGc_not, pop)
+sdg_ner_bygroup.wpop <- Global_SDG_bygroup_fun(SDGc_ner, pop)
+sdg_dst_bygroup.wpop <- Global_SDG_bygroup_fun(SDGc_dst, pop)
+
+
+# combine all together
+bygroup_relnot.wpop <- rbind(sdg_rel_bygroup.wpop,
+                           sdg_not_bygroup.wpop) %>%
+  as.data.frame %>%
+  # create new col
+  mutate(group_scenario = paste(group, scenario, sep = '_')) %>%
+  dplyr::select(group_scenario, paste0(seq(1995, 2009), '_sum')) %>%
+  # wide table to long table
+  melt(. , id = 'group_scenario') %>%    # items in id will not be changed
+  # create new col using number-year
+  mutate(year = as.factor(gsub('_mean|_sum', '', variable)))
+
+fig2.dt.wpop <- rbind(glo_relnot_wpop, bygroup_relnot.wpop)
+
+
+######################################################################### #
+# for figure 3b, including not_bygroup, ner_bygroup, dst_bygroup -----
+sdgc.bygroup.notnerdst.wpop <- rbind(sdg_not_bygroup.wpop,
+                                     sdg_ner_bygroup.wpop,
+                                     sdg_dst_bygroup.wpop) %>%
+  as.data.frame %>%
+  # create new col
+  mutate(group_scenario = paste(group, scenario, sep = '_')) %>%
+  dplyr::select(group_scenario, paste0(seq(1995, 2009), '_sum')) %>%
+  # wide table to long table
+  melt(. , id = 'group_scenario') %>%    # items in id will not be changed
+  # create new col using number-year
+  mutate(year = as.factor(gsub('_mean|_sum', '', variable))) %>%
+  dplyr::select(group_scenario, year, value)
+
+```
+
+
+
+#### .3. gdp weight
+```{r }
+# import function: Global_SDG_fun.R  
+source(paste0(dir, "/_function_Global_SDG_bygroup.R"))
+
+sdg_rel_bygroup.wgdp <- Global_SDG_bygroup_fun(SDGc_rel, GDP_c_rel)
+sdg_not_bygroup.wgdp <- Global_SDG_bygroup_fun(SDGc_not, GDP_c_not)
+sdg_ner_bygroup.wgdp <- Global_SDG_bygroup_fun(SDGc_ner, GDP_c_ner)
+sdg_dst_bygroup.wgdp <- Global_SDG_bygroup_fun(SDGc_dst, GDP_c_dst)
+
+# combine all together
+bygroup_relnot.wgdp <- rbind(sdg_rel_bygroup.wgdp,
+                             sdg_not_bygroup.wgdp) %>%
+  as.data.frame() %>%
+  # create new col
+  dplyr::mutate(group_scenario = paste(group, scenario, sep = '_')) %>%
+  dplyr::select(group_scenario, paste0(seq(1995, 2009), '_sum')) %>%
+  # wide table to long table
+  melt(. , id = 'group_scenario') %>%    # items in id will not be changed
+  # create new col using number-year
+  dplyr::mutate(year = as.factor(gsub('_mean|_sum', '', variable)))
+
+fig2.dt.wgdp <- rbind(glo_relnot_wgdp, bygroup_relnot.wgdp)
+
+
+
+######################################################################### #
+# for figure 3b, including not_bygroup, ner_bygroup, dst_bygroup -----
+sdgc.bygroup.notnerdst.wgdp <- rbind(sdg_not_bygroup.wgdp,
+                                     sdg_ner_bygroup.wgdp,
+                                     sdg_dst_bygroup.wgdp) %>%
+  as.data.frame() %>%
+  # create new col
+  mutate(group_scenario = paste(group, scenario, sep = '_')) %>%
+  dplyr::select(group_scenario, paste0(seq(1995, 2009), '_sum')) %>%
+  # wide table to long table
+  melt(. , id = 'group_scenario') %>%    # items in id will not be changed
+  # create new col using number-year
+  mutate(year = as.factor(gsub('_mean|_sum', '', variable))) %>%
+  dplyr::select(group_scenario, year, value)
+
+```
+
+
+
+#### .4. gdppc weight
+```{r }
+# import function: Global_SDG_fun.R  
+source(paste0(dir, "/_function_Global_SDG_bygroup.R"))
+
+sdg_rel_bygroup.wgdppc <- Global_SDG_bygroup_fun(SDGc_rel, GDPPC_c_rel)
+sdg_not_bygroup.wgdppc <- Global_SDG_bygroup_fun(SDGc_not, GDPPC_c_not)
+sdg_ner_bygroup.wgdppc <- Global_SDG_bygroup_fun(SDGc_ner, GDPPC_c_ner)
+sdg_dst_bygroup.wgdppc <- Global_SDG_bygroup_fun(SDGc_dst, GDPPC_c_dst)
+
+# combine all together
+bygroup_relnot.wgdppc <- rbind(sdg_rel_bygroup.wgdppc,
+                               sdg_not_bygroup.wgdppc) %>%
+  as.data.frame() %>%
+  # create new col
+  dplyr::mutate(group_scenario = paste(group, scenario, sep = '_')) %>%
+  dplyr::select(group_scenario, paste0(seq(1995, 2009), '_sum')) %>%
+  # wide table to long table
+  melt(. , id = 'group_scenario') %>%    # items in id will not be changed
+  # create new col using number-year
+  dplyr::mutate(year = as.factor(gsub('_mean|_sum', '', variable)))
+
+fig2.dt.wgdppc <- rbind(glo_relnot_wgdppc, bygroup_relnot.wgdppc)
+
+
+
+######################################################################### #
+# for figure 3b, including not_bygroup, ner_bygroup, dst_bygroup -----
+sdgc.bygroup.notnerdst.wgdppc <- rbind(sdg_not_bygroup.wgdppc,
+                                       sdg_ner_bygroup.wgdppc,
+                                       sdg_dst_bygroup.wgdppc) %>%
+  as.data.frame() %>%
+  # create new col
+  mutate(group_scenario = paste(group, scenario, sep = '_')) %>%
+  dplyr::select(group_scenario, paste0(seq(1995, 2009), '_sum')) %>%
+  # wide table to long table
+  melt(. , id = 'group_scenario') %>%    # items in id will not be changed
+  # create new col using number-year
+  mutate(year = as.factor(gsub('_mean|_sum', '', variable))) %>%
+  dplyr::select(group_scenario, year, value)
+
+```
+
+
+
+#### ----- Theme and font
+```{r }
+### for Fig 1a in the main text
+mytheme <- #ggpubr::theme_transparent()+
+  theme(
+    # axis.line = element_line(size = 0.25),  # colour = 'black', 
+    axis.ticks = element_line(size = 0.25), # colour = "black", 
+    panel.background = element_rect(fill = "transparent", colour = NA),
+    # plot.background = element_rect(fill = "transparent", colour = NA),
+    legend.background = element_rect(fill = "transparent", colour = NA),
+    legend.box.background = element_rect(fill = "transparent", colour = NA),
+    axis.title = element_text(family=font, size=font_size),
+    text=element_text(family=font, size=font_size))
+```
+
+###  Figure 2a  
+   Plot Fig 2a in 3 ways of weighting. 
+    We compare the *temporal change* of SDGs in developed countries and developing countries. Countries are divided into two groups by GDP per capita.
+```{r}
+source(paste0(dir, "/Figure2a_func.R"))
+
+Fig_2a_data.list <- ls(pattern="^fig2.dt.w*"); Fig_2a_data.list
+approach <- 'c'
+
+Figure2a_func(fig2.dt.w1)
+Figure2a_func(fig2.dt.wpop)
+Figure2a_func(fig2.dt.wgdp)
+Figure2a_func(fig2.dt.wgdppc)
+
+source(paste0(dir, "/Figure2a_func.R"))
+fig2a.w1 <- Figure2a_func(fig2.dt.w1)
+```
+
+
+
+### Figure 2b
+
+  The difference of SDGc score between developed and developing countries, under two trade scenarios.
+  
+```{r - 4 weights approach}
+
+source(paste0(dir, "/Figure2b_func.R"))
+
+Fig_2a_data.list <- ls(pattern="^fig2.dt.w*"); Fig_2a_data.list
+
+Figure2b_func(fig2.dt.w1)
+Figure2b_func(fig2.dt.wpop)
+Figure2b_func(fig2.dt.wgdp)
+Figure2b_func(fig2.dt.wgdppc)
+
+source(paste0(dir, "/Figure2b_func.R"))
+fig2b.w1 <- Figure2b_func(fig2.dt.w1)
+```
+
+
+
+
+### Figure 2ab
+
+```{r}
+source(paste0(dir, "/Figure2a_func.R"))
+fig2a.w1 <- Figure2a_func(fig2.dt.w1)
+
+source(paste0(dir, "/Figure2b_func.R"))
+fig2b.w1 <- Figure2b_func(fig2.dt.w1)
+
+library(ggpubr)
+fig2ab <- ggarrange(fig2a.w1, fig2b.w1, 
+  nrow = 1, ncol = 2, labels = 'auto', hjust = -0.5, #widths = c(6.8, 2), 
+  widths = c(1, 1*2/4.8), font.label = list(size = 7), #vjust = 2,
+  align = 'h', common.legend = F)
+fig2ab
+fname <- paste0(dir.fig, '/Fig_2ab.pdf'); fname
+# ggsave(fname, fig2ab, width = 8.8, height = 6.5, units = "cm") ## 17, 15
+
+
+
+# fname <- paste0(dir.fig, '/Fig_2ab.jpg'); fname
+# ggsave(fname, p2ab, width = 8.8, height = 6.5, units = "cm", dpi = 300)
+
+### 2019 version
+# p1 <- ggdraw() + draw_image(paste0(dir.fig, '/Fig.2a_c_w1_', today, '.png'), 
+#                             scale = 1)
+# p2 <- ggdraw() + draw_image(paste0(dir.fig, '/Fig.2b_c_w1_', today, '.png'), 
+#                             scale = 1)
+# p2ab <- plot_grid(p1, p2, labels = 'auto', rel_widths = c(1, 1*2/4.8), hjust = -1,
+#                   # label_size = 12,   
+#                  # ncol = 2, nrow = 1, 
+#                  align = "v")
+# 
+# fname <- paste0(dir.fig, '/Fig.2ab_', today, '.png')
+# ggsave(filename = fname, plot = last_plot(), 
+#        width = 4.8+2, height = 5.5, units = "in",
+#        dpi = 300) 
+
+
+
+```
+
+###  Figure 2c
+```{r data}
+# rm(list = ls())
+library(readxl)
+library(ggplot2)
+library(dplyr)
+
+# set work dir
+dir
+dir.out <- paste0(dir, '/update_0503_SUM_dist/_output_score')
+# setwd(wdir)
+
+csvs <- list.files(path = dir.out, pattern="^score_c_*"); csvs; approach = 'c'
+# csvs <- list.files(pattern="^score_b_*"); csvs; approach = 'b'
+
+diffs <- data.frame(row.names=1:41)
+# [1] way#1: read csv as dataframe (all cols)
+for (csv in csvs){
+  print(csv)
+  score_x <- read.csv(file = paste0(dir.out, '/', csv))[, -1]
+  names(score_x) <- c('nation', seq(1995, 2009), "scenario", "group")
+  assign(paste('sdg_', substr(csv, 7, 13), sep=''), score_x)
+  
+  
+  score_x_rel <- score_x %>% filter(scenario == paste0('rel_', approach))
+  score_x_not <- score_x %>% filter(scenario == paste0('not_', approach))
+  score_x_dif <- score_x_rel[, 2:16] - score_x_not[, 2:16]
+  
+  score_x_dif <- score_x_dif %>%
+    as.data.frame() %>%
+    # rowwise() %>%
+    mutate(mean     = rowMeans(.[, 1:15])) %>%
+    mutate(nation   = score_x_rel$nation,
+           scenario = score_x_rel$scenario,
+           group    = score_x_rel$group) %>%
+    as.data.frame()
+
+  diffs <- cbind(diffs, score_x_dif[,16])
+  
+  assign(paste('sdg_dif_', substr(csv, 7, 13), sep=''), score_x_dif)
+  # fname <- paste('sdg_dif_rel__not_', substr(csv, 7, 13), '.csv', sep='')
+  # write.csv(x = score_x_dif, file = fname)
+}
+
+
+dfname <- list()
+
+for (csv in csvs){
+  x <- gsub(".*?([0-9]+).*", "\\1", csv)
+  y <- paste0('SDG', x)
+  print(x)
+  print(y)
+  dfname[[csv]] <- y
+}
+
+dfname
+
+names(diffs)
+names(diffs) <- dfname
+
+diffs <- diffs %>%
+  mutate(nation   = score_x_rel$nation,
+         scenario = score_x_rel$scenario,
+         group    = score_x_rel$group)
+
+### developed countries
+chg_1 <- diffs %>%  filter(group == 1)
+### develping countries
+chg_0 <- diffs %>%  filter(group == 0)
+
+### function
+increase <- function(x) sum(x >  0) 
+decrease <- function(x) sum(x <= 0)
+
+library(plyr)
+library(tidyr)
+library(tidyverse)
+
+numcolwise(increase)(chg_1) ### for each col, count the number of countries that increased the score 
+
+chg_1_inc <- numcolwise(increase)(chg_1)/28*100 ## % of countries increased score for each SDG
+chg_1_dec <- numcolwise(decrease)(chg_1)/28*100
+chg_0_inc <- numcolwise(increase)(chg_0)/13*100
+chg_0_dec <- numcolwise(decrease)(chg_0)/13*100
+
+change <- c('chg_1_inc', 
+            'chg_1_dec', 
+            'chg_0_inc', 
+            'chg_0_dec')
+chgs      <- cbind(change, rbind(chg_1_inc, 
+                                 chg_1_dec, 
+                                 chg_0_inc, 
+                                 chg_0_dec))#[, -9]
+len <- ncol(chgs); len
+chgs.dt <- chgs[, -len] %>%  ## remove the last col, which is the group name
+  gather(SDG, percent, 2:(len - 1)) %>%
+  filter(grepl("*_inc$", change))
+
+head(chgs.dt)
+unique(chgs.dt$SDG)
+
+unique(chgs.dt$change)
+chgs.dt$change <- factor(chgs.dt$change, 
+                      levels=c('chg_1_inc', 'chg_0_inc'))
+levels(chgs.dt$change)
+# plot --------------------------------------------------------------------
+unique(chgs.dt$SDG)
+
+
+### Goal level
+# chgs.dt$SDG <- factor(chgs.dt$SDG, 
+#                       levels=c('SDG99', 'SDG6','SDG7','SDG8','SDG9',
+#                                # 'SDG12',
+#                                'SDG13','SDG15'))
+
+### Target level
+chgs.dt$SDG <- factor(chgs.dt$SDG, 
+                      levels=c('SDG99', 'SDG6','SDG72', 'SDG73', 'SDG8','SDG9',
+                               'SDG13', 'SDG151', 'SDG152'))
+
+levels(chgs.dt$SDG)
+
+# change facet labels
+levels(chgs.dt$SDG) <- c('SDGct', 'SDG6.4', 'SDG7.2',  'SDG7.3', 'SDG8.4/12.2',
+                         'SDG9.4', 'SDG13.2','SDG15.1', 'SDG15.2')
+```
+
+
+
+```{r plot}
+fig2c <- ggplot(data=chgs.dt,
+                aes(x=SDG, y=percent ,fill = change)) +
+  theme_bw() +
+  xlab("SDG targets") +
+  ylab("Percentage of coutries made improvement\n in each country group (%)") +
+  scale_fill_manual(values=c("royalblue1", "chocolate1"),
+                    name="",
+                    labels=c("Developed", "Developing")) +
+  geom_bar(stat="identity"
+           #, color="blue"
+           , position=position_dodge(0.3) # overlay
+           , alpha = 0.5) + # transparency
+  # scale_x_discrete(labels=c("SDGs" = "SDGc")) +
+  scale_y_continuous(breaks=seq(0,100,10),
+                     limits=c(0,100)) +
+  geom_hline(yintercept=50,color="red1",linetype = 'dashed', alpha= 0.3, lwd = 0.15)+ # longdash
+  
+  mytheme+
+  
+  theme(legend.position = c(0.9, 0.95),
+        axis.text.x = element_text(angle=20, hjust=.5, vjust = 1),
+        legend.key.size = unit(0.2,"cm"),
+        panel.grid.major = element_line(size=0.2),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill="transparent")) #+
+  # ggtitle("c")
+
+  # theme(plot.title = element_text(margin = margin(b = -15)))
+  # annotate("text", x=0.7, y=100, label= "bold((b))", 
+  #          colour = "black", size = 4, parse = TRUE)
+fig2c
+# save/export plot to local dir
+fname <-  paste0(dir.fig, '/Fig_2c_', approach, '.jpg');fname
+# ggsave(filename = fname, plot = fig2c, width = 8.8, height = 7, units = "cm")
+
+### ref: 
+#https://campus.datacamp.com/courses/data-visualization-with-ggplot2-1/chapter-4-geometries?ex=7
+```
+
+
+
+
+### Figure 2d
+
+  This section aims to plot *bar plots wiht error bars* (see function - Figure2d_func.R), and these bar plots present the diff between trade and no-trade scenarios.
+  For each SDG, we plot by "All countries", "Developed countries" and "Developing countries". Because of the grouping, we apply 3 weigting approaches to demostrate the differences.
+
+#### .1 w1_data - bygroup byscenario
+```{r}
+
+# rm(list = ls())
+library(readxl)
+library(ggplot2)
+library(dplyr)
+
+### input data
+data.path <- paste0(dir, '/update_0503_SUM_dist/_output_score'); data.path
+csvs <- list.files(path = data.path, pattern = '^score_c_*'); csvs
+
+wname = 'equ'
+csvs <- list.files(path = data.path, pattern = '^score_c_*'); csvs
+
+# diff between rel and not (trade) scenario -------------------------------
+# Function for pre-pocessing 
+source(paste0(dir, "/Func_dif_rel__not_bygroup_w1.R"))
+
+# process all the csv for each SDG indicator
+for (csv in csvs){
+  Func_dif_rel__not_bygroup_w1(csv)
+}
+
+# read in all the processed results from above function
+csvs <- list.files(path = data.path, pattern = '^dif_rel__not_bygroup_wequ_*'); csvs
+dfs  <- data.frame()
+
+for (csv in csvs){
+  print(csv)
+  df  <- read.csv(csv)[, -1] %>%
+    mutate(SDG = paste0('SDG', gsub(".*?([0-9]+).*", "\\1", csv)))
+  dfs <- rbind(dfs, df)
+}
+
+# str(dfs)
+# dfs$SDG <- as.factor(dfs$SDG)
+# levels(dfs$SDG)
+# dfs$SDG <- factor(dfs$SDG,
+#                   levels=c('SDG99', 'SDG6','SDG7','SDG8','SDG9','SDG13','SDG15'))
+
+### plot and save 
+source(paste0(dir, "/Figure2d_func.R"))
+Figure2d_func(dfs)
+
+fig2d <- Figure2d_func(dfs)
+
+SourceData_Fig_2d0 <- dfs
+```
+
+
+
+#### .2 wpop_data - bygroup byscenario
+```{r}
+
+# diff between rel and not (trade) scenario -------------------------------
+load(file = paste0(dir, "/update_0503_SUM_dist/_input_data/pop_data.RData"))
+w     =  pop
+wname = 'pop'
+
+csvs <- list.files(path = data.path, pattern = '^score_c_*'); csvs
+
+# Function for prepocessing 
+# source("G:/My Drive/_paper/170923_trade_Global SDGs/results/Func_dif_rel__not_bygroup_w1.R")
+source(paste0(dir, "/Func_dif_rel__not_bygroup_wx.R"))
+# source("G:/My Drive/_paper/170923_trade_Global SDGs/results/Func_dif_rel__not_bygroup_wgdp.R")
+
+# process all the csv for each SDG indicator
+for (csv in csvs){
+  Func_dif_rel__not_bygroup_wx(csv, w)
+}
+
+
+# read in all the processed results from above function
+csvs <- list.files(path = data.path, pattern = '^dif_rel__not_bygroup_wpop_c_*'); csvs
+dfs  <- data.frame()
+
+for (csv in csvs){
+  print(csv)
+  df  <- read.csv(csv)[, -1] %>%
+    mutate(SDG = paste0('SDG', gsub(".*?([0-9]+).*", "\\1", csv)))
+  dfs <- rbind(dfs, df)
+}
+
+
+### plot and save 
+source(paste0(dir, "/Figure2d_func.R"))
+Figure2d_func(dfs)
+
+```
+
+
+
+#### .3 wgdp_data - by group by scenario
+```{r}
+
+# diff between rel and not (trade) scenario -------------------------------
+getwd()
+load(file = paste0(dir, "/update_0503_SUM_dist/_input_data/gdp_c_data.RData"))
+
+w     =  GDP_c_rel
+wname = 'gdp'
+csvs <- list.files(path = data.path, pattern = '^score_c_*'); csvs
+
+# Function for prepocessing 
+source(paste0(dir, "/Func_dif_rel__not_bygroup_wx.R"))
+
+# process all the csv for each SDG indicator
+for (csv in csvs){
+  Func_dif_rel__not_bygroup_wx(csv, w)
+}
+
+
+# read in all the processed results from above function
+csvs <- list.files(path = data.path, pattern = '^dif_rel__not_bygroup_wgdp_*'); csvs
+dfs  <- data.frame()
+
+for (csv in csvs){
+  print(csv)
+  df  <- read.csv(csv)[, -1] %>%
+    mutate(SDG = paste0('SDG', gsub(".*?([0-9]+).*", "\\1", csv)))
+  dfs <- rbind(dfs, df)
+}
+
+
+### plot and save 
+source(paste0(dir, "/Figure2d_func.R"))
+Figure2d_func(dfs)
+
+```
+
+
+
+
+### Figure 2abcd in 1
+```{r}
+library(ggpubr)
+fig2abcd <- ggarrange(
+  fig2ab,
+  # ggarrange(fig2a.w1, fig2b.w1, 
+  #           nrow = 1, ncol = 2, labels = 'auto', hjust = -0.5, #widths = c(6.8, 2), 
+  #           widths = c(1.5, 0.5), font.label = list(size = 7), #vjust = 2,
+  #           align = 'v', common.legend = F),
+  fig2c,
+  fig2d, 
+  nrow = 3, ncol = 1, labels = c('', 'c', 'd'), hjust = -0.5, #widths = c(6.8, 2), 
+  font.label = list(size = 7), 
+  align = 'h', common.legend = F)
+
+fname <- paste0(dir.fig, '/Fig_2_v0528.pdf'); fname
+ggsave(fname, fig2abcd, width = 8.8, height = 21, units = "cm") ## 17, 15
+
+# fname <- paste0(dir.fig, '/Fig_2abcd.jpg'); fname
+# ggsave(fname, fig2abcd, width = 8.8, height = 20, units = "cm") ## 17, 15
+
+### -
+
+```
+
+## --- Source Data for Fig 2
+```{r}
+### save Fig 2ab data to excel ---------------------------------------------------
+wdir
+SourceData_Fig_2 <- fig2.dt.w1 %>% select(-variable)
+names(SourceData_Fig_2) <- c("Scenario", "Score", "Year")
+SourceData_Fig_2ab <- SourceData_Fig_2 %>%
+  spread(key = Scenario, value = Score)
+fname <- paste0(wdir, '/SourceData_Fig_2ab.xlsx'); fname
+writexl::write_xlsx(x = SourceData_Fig_2ab, path = fname)
+
+
+
+### save Fig 2c data to excel ---------------------------------------------------
+# names(shp_dt)
+SourceData_Fig_2c <- chgs.dt # %>% 
+fname <- paste0(wdir, '/SourceData_Fig_2c.xlsx'); fname
+writexl::write_xlsx(x = SourceData_Fig_2c, path = fname)
+
+
+
+### save Fig 2d data to excel ---------------------------------------------------
+SourceData_Fig_2d <- SourceData_Fig_2d0 %>%
+  gather(key = 'Year', value = 'Score', 1:15) %>%
+  dplyr::mutate(Year = as.numeric(gsub("\\D", "", Year)))
+SourceData_Fig_2d$group <- mapvalues(SourceData_Fig_2d$group,
+                                     from = c(0, 1, 'glo'), 
+                                     to   = c('Developing', 'Developed', 'Global'))
+SourceData_Fig_2d$SDG <- mapvalues(SourceData_Fig_2d$SDG,    
+                                   from = c('SDG13',  'SDG6',  'SDG8',      "SDG9",  "SDG99"), 
+                                   to   = c('SDG132', 'SDG64', 'SDG84/122', "SDG94", "SDGct"))
+unique(SourceData_Fig_2d$SDG)
+fname <- paste0(wdir, '/SourceData_Fig_2d.xlsx'); fname
+writexl::write_xlsx(x = SourceData_Fig_2d, path = fname)
+```
+
+
+
+##  Figure 3
+### Figure 3a (4 weighting)
+
+  Line graph shows the temporal change of composite SDG scores under distant trade, nearby trade, and no-trade.
+  
+```{r}
+
+source(paste0(dir, "/Figure3a_func.R"))
+
+Fig_3a_data.list <- ls(pattern="^glo_notnerdst_w*"); Fig_3a_data.list
+
+
+Figure3a_func(glo_notnerdst_w1)
+Figure3a_func(glo_notnerdst_wpop)
+Figure3a_func(glo_notnerdst_wgdp)
+Figure3a_func(glo_notnerdst_wgdppc)
+
+fig3a <- Figure3a_func(glo_notnerdst_w1)
+
+```
+
+
+### Figure 3b
+
+  For developed and developing countries groups, plot the average SDGc under 3 trade-scenario: no-trade, only adjacent trade, and only distant trade.
+  Still, 4 weighting approaches applied here.
+  
+####  .1. wequ
+
+```{r}
+# data: sdgc.bygroup.notnerdst.w1
+source(paste0(dir, "/Figure3b_func.R"))
+
+Fig_3b_data.list <- ls(pattern="^sdgc.bygroup.notnerdst.w*"); Fig_3b_data.list
+
+fig3b <- Figure3b_func(sdgc.bygroup.notnerdst.w1)
+
+
+
+#### add Brackets (approach #1)
+bracketsGrob <- function(...){
+  l <- list(...)
+  e <- new.env()
+  e$l <- l
+    grid:::recordGrob(  {
+      do.call(grid.brackets, l)
+    }, e)
+}
+## https://stackoverflow.com/questions/35633239/add-curly-braces-to-ggplot2-and-then-use-ggsave
+
+# note that units here are "npc", the only unit (besides physical units) that makes sense
+# when annotating the plot panel in ggplot2 (since we have no access to 
+# native units)
+
+## grid.brackets(x1, y1, x2, y2, h = NULL, ticks = 0.5, curvature = 0.5, type = 1, col = 1, lwd = 1, lty = "solid")
+## if x1 > x2, flip brackets directions to face up
+bottom_y = 0.85
+b1 <- bracketsGrob(0.05, bottom_y, 0.45, bottom_y, h=0.05, lwd=0.5, col="royalblue1") 
+b2 <- bracketsGrob(0.55, bottom_y, 0.95, bottom_y, h=0.05, lwd=0.5, col="chocolate1")
+
+(fig3b <- fig3b + 
+  annotation_custom(b1)+ 
+  annotation_custom(b2))
+
+
+#### add Brackets (approach #2)
+# library(pBrackets)  # this will also load grid package
+# library(grid)
+# # grid.locator(unit="native")
+# 
+# bottom_y = 305 # 470 for limits=c(50,90)
+# # the smaller this value, the more distance from the bottom
+# grid.brackets(230, bottom_y, 870,  bottom_y, lwd=1, col="royalblue1")
+# grid.brackets(930, bottom_y, 1570, bottom_y, lwd=1, col="chocolate1")
+# dev.off()
+
+```
+
+
+####  .2. wpop, wgdp
+```{r}
+Figure3b_func(sdgc.bygroup.notnerdst.wpop)
+library(pBrackets)  # this will also load grid package
+library(grid)
+# grid.locator(unit="native")
+# bottom_y = 305 # 470 for limits=c(50,90)
+# # the smaller this value, the more distance from the bottom
+# grid.brackets(230, bottom_y, 870,  bottom_y, lwd=1, col="royalblue1")
+# grid.brackets(930, bottom_y, 1570, bottom_y, lwd=1, col="chocolate1")
+# dev.off()
+
+
+
+# gdp -------------------------------------------------------- #
+Figure3b_func(sdgc.bygroup.notnerdst.wgdp)
+library(pBrackets)  # this will also load grid package
+library(grid)
+
+
+```
+
+
+
+### Figure 3c
+
+####  .1 approach_c
+```{r}
+# To clear your environment 
+# remove(list = ls())
+
+library(readxl)
+library(ggplot2)
+library(dplyr)
+
+data.path <- paste0(dir, '/update_0503_SUM_dist/_output_score')
+csvs <- list.files(path = data.path, pattern = 'diff_score_c_*', full.names = T); csvs
+
+alldata <- data.frame()
+
+for (csv in csvs){
+  dt <- read.csv(csv, stringsAsFactors = FALSE)
+  alldata <- rbind(alldata, dt)
+}
+
+##### reshape data ####
+library(reshape)
+library(reshape2)
+library(tidyr)
+
+names(alldata)
+
+df3.1 <- alldata %>% 
+  melt(., id = c("X", "name", "group_scenario")) %>% as.data.frame()
+
+
+df3.2 <- transform(df3.1, value = as.numeric(value))
+names(df3.2) = c("id","SDGname", "group", "year", "sdgvalue")
+
+# summarySE provides the standard deviation, standard error of the mean, and a (default 95%) confidence interval
+library(Rmisc)
+library(ggplot2)
+df3.3 <- summarySE(df3.2, measurevar="sdgvalue", groupvars=c("group", "SDGname"))
+
+unique(df3.3$SDGname)
+unique(df3.3$group)
+
+
+val.max = max(df3.3$sdgvalue) + max(df3.3$se); val.max
+val.min = min(df3.3$sdgvalue) - min(df3.3$se); val.min
+  
+  # val.min = - 15; val.min
+val.max <- ceiling(val.max); val.max
+val.min <- floor(val.min)-1;   val.min
+#### Goal level ----------------------------------------------- #
+# order <- c("99_sdgc", "6_wat", "7_ene", "8_mat", "9_co2", 
+#            # "12_mat-perCap", 
+#            "13_co2-forest", "15_for")
+# lable.change <- c("99_sdgc" = "SDGc",
+#                   '6_wat'   = 'SDG6',
+#                   "7_ene"   = 'SDG7', 
+#                   "8_mat"   = 'SDG8/12',
+#                   "9_co2"   = 'SDG9', 
+#                   # "12_mat-perCap" = 'SDG12', 
+#                   "13_co2-forest" = 'SDG13', 
+#                   "15_for"        = 'SDG15')
+#### Target level ----------------------------------------------- #
+order <- c("99_sdgc", "6_wat", "72_ene", "73_ene", "8_mat", "9_co2", 
+           "13_co2-forest", "151_for", "152_for")
+
+lable.change <- c("99_sdgc" = "SDGct",
+                  '6_wat'   = 'SDG6.4',
+                  "72_ene"  = 'SDG7.2', 
+                  "73_ene"  = 'SDG7.3', 
+                  "8_mat"   = 'SDG8.4/12.2', 
+                  "9_co2"   = 'SDG9.4', 
+                  "13_co2-forest" = 'SDG13.2', 
+                  "151_for" = 'SDG15.1', 
+                  "152_for" = 'SDG15.2')
+##### ------------------------------------------------------------ #
+
+
+
+
+# Use SDGname as a factor rather than numeric
+df3.3$SDGname <- factor(df3.3$SDGname, levels = order)
+df3.3$group   <- factor(df3.3$group,   levels=c('diff_glo', 'diff_1', 'diff_0'))
+
+
+
+#library(plotly)
+# Error bars represent standard error of the mean
+fig3c <- ggplot(df3.3, aes(x=SDGname, y=sdgvalue, fill=group)) +
+  geom_bar(position = position_dodge(0.8), stat="identity", width = 0.8)+ #, binwidth=0)+#,
+           #width=0.5)+#2/length(unique(df3.3$group))) +
+  #scale_fill_brewer(palette="Accent") +
+  #xlim(5, 40)+
+  #ylim(-10, 10)+
+  scale_y_continuous(breaks = seq(val.min, val.max, 3),
+                     limits =   c(val.min, val.max)) +
+  #guides(shape = guide_legend(override.aes = list(size = 1))) +
+  guides(fill = guide_legend(keywidth = 0.7, keyheight = 0.7)) +
+  #theme(legend.text=element_text(size=5)) +
+  #guides(colour = guide_legend(override.aes = list(size=1)))+
+  geom_errorbar(aes(ymin = sdgvalue - se, 
+                    ymax = sdgvalue + se),
+                width = 0.2, size = 0.1,                 # Width of the error bars
+                position=position_dodge(.8)) +
+  
+  xlab("SDG targets") +
+  ylab("Difference in SDG target scores between\ndistant trade only and adjacent trade only scenario") + ## SDG scores difference
+  #scale_fill_hue(name="",#, # Legend label, use darker colors
+                 #breaks=c("OJ", "VC"),
+                 #labels=c("Gloabl","Develped", "Develpeing")) +
+  
+  scale_fill_manual(name="",
+                    values=c("lightskyblue", "royalblue1", "chocolate1"),
+                    labels=c("All countries","Developed",  "Developing")) +
+      # color: http://sape.inf.usi.ch/quick-reference/ggplot2/colour
+  #ggtitle("Changes in SDGs") +
+  #theme(plot.title = element_text(hjust = 0.5)) +
+ 
+  geom_vline(xintercept=seq(1,length(df3.3[,2])/3, 1) + 0.5, color="gray", size = 0.2) +
+  geom_hline(yintercept=seq(0,0,0),color="gray", size = 0.2) +
+  
+  theme_bw() +
+  mytheme + 
+  
+  
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_text(angle=45, hjust = 1, vjust = 1),
+        legend.key.size = unit(0.05,"cm"),
+        legend.key.width = unit(0.05,"cm"),
+        legend.position = c(0.2, 0.9),
+        # legend.text = element_text(
+        #   colour = 'black', angle = 0, #size = 11, 
+        #   hjust = 3, vjust = -1),
+        legend.background = element_rect(fill="transparent")) +  
+  scale_x_discrete(labels = lable.change) #+
+  # http://www.sthda.com/english/wiki/ggplot2-axis-ticks-a-guide-to-customize-tick-marks-and-labels
+  # scale_y_continuous(breaks=0:20*4) +
+  # ggtitle("c")
+
+  # annotate("text", x=0.7, y=8, label= "bold((b))", 
+  #         colour = "black", size = 4, parse = TRUE)
+  # annotate(geom = "text", x = 0.7, y = 1.2, 
+  #          label = "0.040", color = "lightskyblue", size = 4,
+  #          angle = 90)
+
+fig3c
+
+timestamp = format(Sys.time(), "%Y%m%d"); timestamp
+filename_c = paste(dir.fig, '/Fig.3c_c_', timestamp, '.jpg', sep = ''); filename_c
+# ggsave(filename = filename_c, fig3c, width = 7, height = 5.5, units = "in", dpi = 300)
+# refs:
+# http://www.cookbook-r.com/Graphs/Plotting_means_and_error_bars_(ggplot2)/#Helper functions
+
+```
+
+
+#### .2 approach_b (NOT USE)
+
+```{r }
+# csvs_b <- list.files(path = data.path, pattern = 'diff_score_b_*'); csvs_b
+# 
+# alldata <- data.frame()
+# 
+# for (csv in csvs_b){
+#   dt <- read.csv(csv, stringsAsFactors = FALSE)
+#   alldata <- rbind(alldata, dt)
+# }
+# 
+# 
+# library(Rmisc)
+# df3.1 <- alldata %>% 
+#   melt(., id = c("X", "name", "group_scenario")) %>% as.data.frame()
+# df3.2 <- transform(df3.1, value = as.numeric(value))
+# names(df3.2) <- c("id","SDGname", "group", "year", "sdgvalue")
+# df3.3 <- summarySE(df3.2, measurevar="sdgvalue", groupvars=c("group", "SDGname"))
+# 
+# # Use SDGname as a factor rather than numeric
+# df3.3$SDGname <- factor(df3.3$SDGname, levels = order)
+# df3.3$group   <- factor(df3.3$group,   levels=c('diff_glo', 'diff_1', 'diff_0'))
+# 
+# # Error bars represent standard error of the mean
+# ggplot(df3.3, aes(x=SDGname, 
+#                 y=sdgvalue, 
+#                 fill=group)) +
+#   geom_bar(position = position_dodge(0.8), stat="identity", width = 0.8)+ #, binwidth=0)+#,
+#            #width=0.5)+#2/length(unique(df3.3$group))) +
+#   #scale_fill_brewer(palette="Accent") +
+#   #xlim(5, 40)+
+#   #ylim(-10, 10)+
+#   scale_y_continuous(breaks = seq(-9, 9, 3),
+#                      limits =   c(-9, 9)) +
+#   #guides(shape = guide_legend(override.aes = list(size = 1))) +
+#   guides(fill = guide_legend(keywidth = 0.7, keyheight = 0.7)) +
+#   #theme(legend.text=element_text(size=5)) +
+#   #guides(colour = guide_legend(override.aes = list(size=1)))+
+#   geom_errorbar(aes(ymin = sdgvalue-se, ymax = sdgvalue+se),
+#                 width = 0.3,                    # Width of the error bars
+#                 position=position_dodge(.8)) +
+#   
+#   xlab("SDG indicators") +
+#   ylab("SDG scores difference between\nonly ditant-trade and only adjacent-trade scenario") +
+#   #scale_fill_hue(name="",#, # Legend label, use darker colors
+#                  #breaks=c("OJ", "VC"),
+#                  #labels=c("Gloabl","Develped", "Develpeing")) +
+#   
+#   scale_fill_manual(name="",
+#                     values=c("lightskyblue", "royalblue1", "chocolate1"),
+#                     labels=c("All countries","Developed", "Developing")) +
+#       # color: http://sape.inf.usi.ch/quick-reference/ggplot2/colour
+#   #ggtitle("Changes in SDGs") +
+#   #theme(plot.title = element_text(hjust = 0.5)) +
+#   theme(legend.text = element_text(colour = 'black', 
+#                                    angle = 0, size = 11, 
+#                                    hjust = 3, vjust = -1),
+#         legend.background = element_rect(fill="transparent"))+
+#   geom_vline(xintercept=seq(1,length(df3.3[,2])/3, 1) + 0.5, color="gray") +
+#   theme_bw() +
+#   geom_hline(yintercept=seq(0,0,0),color="gray") +
+#   theme(panel.grid.major = element_blank(), 
+#         panel.grid.minor = element_blank()) +  
+#   theme(legend.position = c(0.915, 0.91)) + # c(0,0); "bottom left"; c(1,1); "top right" 
+#   scale_x_discrete(labels = lable.change) +
+#   # http://www.sthda.com/english/wiki/ggplot2-axis-ticks-a-guide-to-customize-tick-marks-and-labels
+#   # scale_y_continuous(breaks=0:20*4) +
+#   ggtitle("(c)")
+# 
+# filename_b = paste(outdir, '/Fig.3c_b_', timestamp, '.png', sep = ''); filename_b
+# ggsave(filename = filename_b, plot = last_plot(), width = 7, height = 5.5, units = "in", dpi = 300)
+
+```
+
+
+### Figure 3abc in 1
+```{r}
+
+library(ggpubr)
+fig3abc <- ggarrange(
+  fig3a, 
+  fig3b,
+  fig3c,
+  nrow = 1, ncol = 3, align = 'h', 
+  # nrow = 3, ncol = 1, align = 'v', 
+  labels = 'auto', hjust = -0.5,  font.label = list(size = 7), common.legend = F)
+
+# fname <- paste0(dir.fig, '/Fig_3_v.pdf'); fname
+# ggsave(fname, fig3abc, width = 8.8, height = 22, units = "cm") ## 17, 15
+
+fname <- paste0(dir.fig, '/Fig_3_v0528.pdf'); fname
+ggsave(fname, fig3abc, width = 18, height = 7.5, units = "cm") ## 17, 15
+
+```
+
+
+## --- Source Data for Fig 3
+```{r}
+### save Fig 2ab data to excel ---------------------------------------------------
+wdir
+SourceData_Fig_3a <- glo_notnerdst_w1 #%>% select(-variable)
+names(SourceData_Fig_3a) <- c("Group_scenario", "Year", "Score")
+fname <- paste0(wdir, '/SourceData_Fig_3a.xlsx'); fname
+writexl::write_xlsx(x = SourceData_Fig_3a, path = fname)
+
+
+
+### save Fig 2b data to excel ---------------------------------------------------
+# names(shp_dt)
+SourceData_Fig_3b <- sdgc.bygroup.notnerdst.w1 # %>% 
+names(SourceData_Fig_3b) <- c("Group_scenario", "Year", "Score")
+fname <- paste0(wdir, '/SourceData_Fig_3b.xlsx'); fname
+writexl::write_xlsx(x = SourceData_Fig_3b, path = fname)
+
+
+
+### save Fig 2d data to excel ---------------------------------------------------
+SourceData_Fig_3c <- df3.3 #%>%
+unique(SourceData_Fig_3c$group)
+unique(SourceData_Fig_3c$SDGname); head(SourceData_Fig_3c)
+names(SourceData_Fig_3c) <- c("group","SDG","N", "dif_score", "sd", "se", "ci")
+SourceData_Fig_3c$group <- mapvalues(SourceData_Fig_3c$group,
+                                     from = c('diff_0', 'diff_1',   'diff_glo'), 
+                                     to   = c('Developing', 'Developed', 'Global'))
+SourceData_Fig_3c$SDG <- mapvalues(SourceData_Fig_3c$SDG,    
+                                   from = c('13_co2-forest',  '6_wat',  '8_mat',      "9_co2",  "99_sdgc",
+                                            '72_ene', '73_ene', '151_for', '152_for'), 
+                                   to   = c('SDG13.2', 'SDG6.4', 'SDG8.4/12.2', "SDG9.4", "SDGct",
+                                            'SDG7.2', 'SDG7.3', 'SDG15.1', 'SDG15.2'))
+unique(SourceData_Fig_3c$SDG); head(SourceData_Fig_3c)
+fname <- paste0(wdir, '/SourceData_Fig_3c.xlsx'); fname
+writexl::write_xlsx(x = SourceData_Fig_3c, path = fname)
+```
+
+# The end --------------------------------------
+
+
+
