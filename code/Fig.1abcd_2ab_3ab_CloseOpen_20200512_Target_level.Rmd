@@ -10,7 +10,7 @@ editor_options:
 ---
 
 # WD and packages
-```{r echo=FALSE}
+```{r Packages}
 remove(list = ls())
 
 ### packages
@@ -26,8 +26,10 @@ library(sf)
 library(cowplot)
 library(tmap)
 library(ggpubr)
+```
 
 
+```{r Dir}
 ### set work dir
 path <- rstudioapi::getSourceEditorContext()$path
 dir  <- dirname(rstudioapi::getSourceEditorContext()$path); dir
@@ -43,6 +45,8 @@ getwd()
 
 dir.fig <- paste0(dir.root, '/data/Figures'); dir.fig
 ```
+
+
 
 # Data preparation
 ## .1 SDGc data read in
@@ -1123,7 +1127,7 @@ write.csv(x = SDGc_c_gis3, file = fname)
 
 ### shp data from files
 # library(rgdal)
-dir.shp <- paste0(dir, "/update_0503_SUM_dist/_input_data/ne_10m_admin_0_countries")
+dir.shp <- paste0(dir.root, "/data/update_0503_SUM_dist/_input_data/ne_10m_admin_0_countries"); dir.shp
 # shp <- readOGR(dsn = dir.shp, "ne_10m_admin_0_countries")
 shp <- st_read(dsn = dir.shp, layer = "ne_10m_admin_0_countries") %>%
   filter(NAME != 'Antarctica')
@@ -1155,7 +1159,7 @@ names(shp)
   
 
 # plot(shp[1])
-names(shp)
+# names(shp)
 # head(shp)
 
 ### save the shp dataframe as xls, and modify the file in order to be able to link with the score files. 
@@ -1166,7 +1170,7 @@ names(shp)
 
 ### add new country name that are consistant with names uned in SDG data
 library(readxl)
-xls.shp.info <- paste0(dir, '/update_0503_SUM_dist/_input_data/ne_10m_admin_0_countries/Table/ne_10m_admin_0_countries-Export_Output.xls')
+xls.shp.info <- paste0(dir.root, '/data/update_0503_SUM_dist/_input_data/ne_10m_admin_0_countries/Table/ne_10m_admin_0_countries-Export_Output.xls')
 
 nation_new_name <- 
   read_excel(path = xls.shp.info,
@@ -1186,6 +1190,15 @@ str(nation_new_name)
 shp_newName <- shp
 shp_newName <- left_join(shp_newName, nation_new_name, by=c("ADM0_A3" = "ADM0_A3"))
 names(shp_newName)
+
+
+### save the shp for other use ------------------------- #
+shp_wiod <- shp_newName %>%
+  dplyr::select(ADM0_A3, NAME, nation_name)
+fname <- paste0(dir.root, '/data/data_myRData/', 'shp_wiod.RData'); fname
+save(shp_wiod, file = fname)
+### ---------------------------------------------------- #
+
 
 temp = format(Sys.time(), "%Y_%m_%d")
 # dir_output <- 'dir_output'

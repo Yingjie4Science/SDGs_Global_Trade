@@ -11,12 +11,19 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # WD and packages
 
-```{r}
-# ------------- cal dat same as SDG with trade 1995-2009+ROW-0401.xlsx --------------
-
+```{r Packages}
 # To clear your environment 
 remove(list = ls())
 
+library(readxl)
+library(XLConnect)
+library(xlsx)
+library(tidyverse)
+library(reshape2)    ### expand long table to wide one
+```
+
+
+```{r Dir}
 ### set work dir
 path <- rstudioapi::getSourceEditorContext()$path
 dir  <- dirname(rstudioapi::getSourceEditorContext()$path); dir
@@ -25,21 +32,34 @@ setwd('..') # set directory by one folder up
 getwd()
 dir.root <- getwd()
 
-
 wd <- './data/update_0503_SUM_dist'; wd
 getwd()
 setwd(wd)
-dir.figures <- paste0(dir.root, '/', 'Figures'); dir.figures
-dir.output  <- './_output_score';                dir.output
+dir.figures <- paste0(dir.root, '/data/', 'Figures'); dir.figures
+dir.output  <- './_output_score';                     dir.output
+  
+```
 
 
 
+```{r Functions}
+### for calculating net import of footprint
+source(paste0(dir.root, "/code/Func_Net_Import_Cal.R"))
 
-library(readxl)
-library(XLConnect)
-library(xlsx)
-library(dplyr)
+### for normalize the indicator score
+source(paste0(dir.root, "/code/Func_norm_sdg_score_good_bad.R"))
 
+###
+source(paste0(dir.root, "/code/single_diff_func_c_approach.R"))
+source(paste0(dir.root, "/code/single_diff_func_b_approach.R"))
+
+```
+
+
+
+# Data
+## Read in from excel
+```{r}
 
 # df.xlsx <- "0_capital.xlsx"
 df.xlsx <- "6_wat.xlsx";          SDG <- 'SDG6'
@@ -49,50 +69,8 @@ df.xlsx <- "6_wat.xlsx";          SDG <- 'SDG6'
 # df.xlsx <- "12_mat-perCap.xlsx";  SDG <- 'SDG12'
 # df.xlsx <- "13_co2-forest.xlsx";  SDG <- 'SDG13'
 # df.xlsx <- "15_for.xlsx";         SDG <- 'SDG15'
-```
 
-# Data
-## Read in from excel
-```{r}
 
-# functions 
-Net_Import_Cal <- function(df.xlsx) {
-  # trade matrix
-  s1 = read_excel(df.xlsx, sheet = 1, col_names = T, range = "B1:AP616")
-  s2 = matrix
-  
-  # nearby trade matrix
-  s3 = s1 * s2
-  
-  # add country name as a new col
-  countries <- colnames(s2[1:41])
-  colnames(s3) <- countries; length(countries)
-  
-  # add year seq to data frame 
-  year_seq = rep(seq(1995, 2009, by=1), each = 41)
-  s3$year <- year_seq
-  
-  # total nearby imports
-  s4 <- s3 %>% group_by(year) %>% summarise_all(funs(sum))
-  
-  # tanspose data frame and keep the first col as new header
-  s5 = as.data.frame(t(s4[,-1]))
-  colnames(s5) <- seq(1995, 2009, by=1)
-  s5 <- s5[ order(row.names(s5)), ]
-  
-  # total nearby exports
-  library("reshape2") # expand long table to wide one
-  s6 <- s3 %>%
-    mutate(row.sum   = rowSums(s3[,1:41]),
-           year      = year_seq,
-           countries = rep(countries, times = 15)) %>% # times=15, each = 15
-    dcast(countries ~ year, value.var = 'row.sum') # year as new col names
-  s6 <- data.frame(s6[,-1], row.names=s6[,1])
-  s6 <- s6[ order(row.names(s6)), ]
-  
-  # net nearby imports
-  s7 <- s5 - s6
-}
 
 # load spatial relation: nearby or distant
 ner_dst_matrix <- "./_input_data/_adjancet_distant_matrix.xlsx"
@@ -100,13 +78,10 @@ ner.matrix <- read_excel(path = ner_dst_matrix, sheet = 'S2.country_nearby',  co
 dst.matrix <- read_excel(path = ner_dst_matrix, sheet = 'S2.country_distant', col_names = T, range = "B1:AP616")
 not.matrix <- read_excel(path = ner_dst_matrix, sheet = 'S2.country_not',     col_names = T, range = "B1:AP616")
 
-# cal using function
-matrix <- ner.matrix
-s7.ner <- Net_Import_Cal(df.xlsx)
-matrix <- dst.matrix
-s7.dst <- Net_Import_Cal(df.xlsx)
-matrix <- not.matrix
-s7.not <- Net_Import_Cal(df.xlsx)
+#### cal net import under different scenarios: (1) no trade, (2) only nearby trade, (3) only distant trade
+s7.not <- Net_Import_Cal(df.xlsx = df.xlsx, matrix = not.matrix)
+s7.ner <- Net_Import_Cal(df.xlsx = df.xlsx, matrix = ner.matrix)
+s7.dst <- Net_Import_Cal(df.xlsx = df.xlsx, matrix = dst.matrix)
 
 ```
 
@@ -122,7 +97,6 @@ GDP_c_csv  <- './_input_data/_GDP_c_0_capital.csv'
 # GDP_b_csv  <- './_input_data/_GDP_b_0_capital.csv'
 
 GDP_c      <- read.csv(file = GDP_c_csv, header = T, stringsAsFactors = F)
-
 GDP_c_rel <- GDP_c %>% filter(scenario == 'rel_c') %>% dplyr::select(-1, -17)
 GDP_c_not <- GDP_c %>% filter(scenario == 'not_c') %>% dplyr::select(-1, -17)
 GDP_c_ner <- GDP_c %>% filter(scenario == 'ner_c') %>% dplyr::select(-1, -17)
@@ -144,9 +118,6 @@ df_ner_c <- ((loc[, -16] + s7.dst) *10^3)/(GDP_c_ner*10^6)
 df_dst_c <- ((loc[, -16] + s7.ner) *10^3)/(GDP_c_dst*10^6)
 
 ## normalization using the function - Func_norm_sdg_score
-## load the function
-source(paste0(dir, "/Func_norm_sdg_score_good_bad.R"))
-
 score_c1 <- Func_norm_sdg_score_bad(df_rel_c, df_not_c, df_ner_c, df_dst_c,
                                      bottom = 0.025, top = 0.975)
 ## look at the data distribution
@@ -159,17 +130,12 @@ ggplot(score_c1_long, aes(x = value)) +
   ggtitle('Indicator 6.4.1')
 
 
-# score_c2 <- Func_norm_sdg_score_bad(df_rel_c, df_not_c, df_ner_c, df_dst_c, 
-#                                     bottom = 0.025, top = 0.975)
-# ## look at the data distribution
-# score_c2_long <- score_c2 %>% gather(year, value, ... = 2:16)
-# ggplot(score_c2_long, aes(x = value)) + 
-#   geom_histogram() + 
-#   facet_wrap(~scenario) +
-#   theme_bw() +
-#   ggtitle('Indicator 6.4.2')
 
-
+### save the data for side use ---------------------------------------------------
+getwd()
+normalized_score <- score_c1
+fname <- paste0(dir.root, '/data/data_myRData/', 'normalized_score__gdp_per_water.RData'); fname
+save(normalized_score, file = fname)
 ```
 
 
@@ -211,18 +177,11 @@ ggplot(score_c2_long, aes(x = value)) +
   ggtitle('Indicator 6.4.2')
 
 
-
-
-# score_c1 <- Func_norm_sdg_score_bad(df_rel_c, df_not_c, df_ner_c, df_dst_c,
-#                                      bottom = 0.025, top = 0.975)
-# ## look at the data distribution
-# score_c1_long <- score_c1 %>% gather(year, value, ... = 2:16)
-# 
-# ggplot(score_c1_long, aes(x = value)) +
-#   geom_histogram() +
-#   facet_wrap(~scenario) +
-#   theme_bw() +
-#   ggtitle('Indicator 6.4.1')
+### save the data for side use ---------------------------------------------------
+getwd()
+normalized_score <- score_c2
+fname <- paste0(dir.root, '/data/data_myRData/', 'normalized_score__water_stress.RData'); fname
+save(normalized_score, file = fname)
 
 ```
 

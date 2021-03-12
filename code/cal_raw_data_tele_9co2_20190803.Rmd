@@ -43,18 +43,27 @@ dir.output  <- './_output_score';                     dir.output
 
 
 ```{r Functions}
-## load the function
+### for calculating net import of footprint
+source(paste0(dir.root, "/code/Func_Net_Import_Cal.R"))
+
+### for normalize the indicator score
 source(paste0(dir.root, "/code/Func_norm_sdg_score_good_bad.R"))
+
+### for calculating the difference between dst and ner; by global/ group
 source(paste0(dir.root, "/code/single_diff_func_c_approach.R"))
-source(paste0(dir.root, "/code/single_diff_func_b_approach.R"))
+# source(paste0(dir.root, "/code/single_diff_func_b_approach.R"))
+
 ```
 
 
 
 
-```{r}
-# ~~~~~~~~~~ change #1 ~~~~~~~~~~ ----------------------------------------- 
+# Data
+## Read in from excel
 
+```{r}
+### ~~~~~~~~~~ change #1 ~~~~~~~~~~ ----------------------------------------- 
+###
 # df.xlsx <- "0_capital.xlsx"
 # df.xlsx <- "6_wat.xlsx";          SDG <- 'SDG6'
 # df.xlsx <- "7_ene.xlsx";          SDG <- 'SDG7'
@@ -63,121 +72,74 @@ df.xlsx <- "9_co2.xlsx";          SDG <- 'SDG9'
 # df.xlsx <- "12_mat-perCap.xlsx";  SDG <- 'SDG12'
 # df.xlsx <- "13_co2-forest.xlsx";  SDG <- 'SDG13'
 # df.xlsx <- "15_for.xlsx";         SDG <- 'SDG15'
-```
-
-
-# Data
-## Read in from excel
-
-```{r}
 
 
 
-# functions 
-Net_Import_Cal <- function(df.xlsx) {
-  # trade matrix
-  s1 = read_excel(df.xlsx, sheet = 1, col_names = T, range = "B1:AP616")
-  s2 = matrix
-  
-  # nearby trade matrix
-  s3 = s1 * s2
-  
-  # add country name as a new col
-  countries <- colnames(s2[1:41])
-  colnames(s3) <- countries; length(countries)
-  
-  # add year seq to data frame 
-  year_seq = rep(seq(1995, 2009, by=1), each = 41)
-  s3$year <- year_seq
-  
-  # total nearby imports
-  s4 <- s3 %>% group_by(year) %>% summarise_all(funs(sum))
-  
-  # tanspose data frame and keep the first col as new header
-  s5 = as.data.frame(t(s4[,-1]))
-  colnames(s5) <- seq(1995, 2009, by=1)
-  s5 <- s5[ order(row.names(s5)), ]
-  
-  # total nearby exports
-  library("reshape2") # expand long table to wide one
-  s6 <- s3 %>%
-    mutate(row.sum   = rowSums(s3[,1:41]),
-           year      = year_seq,
-           countries = rep(countries, times = 15)) %>% # times=15, each = 15
-    dcast(countries ~ year, value.var = 'row.sum') # year as new col names
-  s6 <- data.frame(s6[,-1], row.names=s6[,1])
-  s6 <- s6[ order(row.names(s6)), ]
-  
-  # net nearby imports
-  s7 <- s5 - s6
-}
-
-# load spatial relation: nearby or distant
+### load nearby-distant matrix ------------------------------------------------
 ner_dst_matrix <- "./_input_data/_adjancet_distant_matrix.xlsx"
 ner.matrix <- read_excel(path = ner_dst_matrix, sheet = 'S2.country_nearby',  col_names = T, range = "B1:AP616")
 dst.matrix <- read_excel(path = ner_dst_matrix, sheet = 'S2.country_distant', col_names = T, range = "B1:AP616")
 not.matrix <- read_excel(path = ner_dst_matrix, sheet = 'S2.country_not',     col_names = T, range = "B1:AP616")
 
-# cal using function
-matrix <- ner.matrix
-s7.ner <- Net_Import_Cal(df.xlsx)
-matrix <- dst.matrix
-s7.dst <- Net_Import_Cal(df.xlsx)
-matrix <- not.matrix
-s7.not <- Net_Import_Cal(df.xlsx)
+
+#### cal net import under different scenarios: (1) no trade, (2) only nearby trade, (3) only distant trade
+s7.not <- Net_Import_Cal(df.xlsx = df.xlsx, matrix = not.matrix)
+s7.ner <- Net_Import_Cal(df.xlsx = df.xlsx, matrix = ner.matrix)
+s7.dst <- Net_Import_Cal(df.xlsx = df.xlsx, matrix = dst.matrix)
 ```
 
 
 
 ## Indicator calculation
 
-### 9.4.1.1 CE/GDP
+### 9.4.1.1 CO2 emission/GDP
   CO2 emissions per unit of value added (low carbon intensity indicates high SDG indicator score)
 ```{r}
 indicator1 <- 'Indicator 9.4.1.1'
 
-### CO2 emissions in Gg (kt); 1kt = 10^6 kg
+### CO2 emissions in Gg (kt); 1kt = 10^6 kg --------------------------------------
 ### data from WIOD-Environmental_Accounts
 loc <- read_excel(df.xlsx,sheet = 7, col_names = T, range = ("U1:AJ42")) # 'S7.net_import_nearby'
 loc <- as.data.frame(loc) 
 # first col as row name
 loc <- data.frame(loc[,-1], row.names=loc[,1])
-loc <- loc[ order(row.names(loc)), ]
+loc <- loc[order(row.names(loc)), ]
 
 
-### GDP data
+### GDP data ----------------------------------------------------------------------
 getwd()
 GDP_c_csv  <- './_input_data/_GDP_c_0_capital.csv'
-GDP_b_csv  <- './_input_data/_GDP_b_0_capital.csv'
-
 GDP_c      <- read.csv(file = GDP_c_csv, header = T, stringsAsFactors = F)
-GDP_b      <- read.csv(file = GDP_b_csv, header = T, stringsAsFactors = F)
 
-GDP_c_rel <- GDP_c %>% filter(scenario == 'rel_c') %>% dplyr::select(-1, -17)
+GDP_c_rel <- GDP_c %>% filter(scenario == 'rel_c') %>% dplyr::select(-1, -17) ## remove 1-country-Name; 17-scenario-Name
 GDP_c_not <- GDP_c %>% filter(scenario == 'not_c') %>% dplyr::select(-1, -17)
 GDP_c_ner <- GDP_c %>% filter(scenario == 'ner_c') %>% dplyr::select(-1, -17)
 GDP_c_dst <- GDP_c %>% filter(scenario == 'dst_c') %>% dplyr::select(-1, -17)
 
-GDP_b_rel <- GDP_b %>% filter(scenario == 'rel_b') %>% dplyr::select(-1, -17)
-GDP_b_not <- GDP_b %>% filter(scenario == 'not_b') %>% dplyr::select(-1, -17)
-GDP_b_ner <- GDP_b %>% filter(scenario == 'ner_b') %>% dplyr::select(-1, -17)
-GDP_b_dst <- GDP_b %>% filter(scenario == 'dst_b') %>% dplyr::select(-1, -17)
+
+### baseline approach (suggested by one reviewer)
+# GDP_b_csv  <- './_input_data/_GDP_b_0_capital.csv'
+# GDP_b      <- read.csv(file = GDP_b_csv, header = T, stringsAsFactors = F)
+# GDP_b_rel <- GDP_b %>% filter(scenario == 'rel_b') %>% dplyr::select(-1, -17)
+# GDP_b_not <- GDP_b %>% filter(scenario == 'not_b') %>% dplyr::select(-1, -17)
+# GDP_b_ner <- GDP_b %>% filter(scenario == 'ner_b') %>% dplyr::select(-1, -17)
+# GDP_b_dst <- GDP_b %>% filter(scenario == 'dst_b') %>% dplyr::select(-1, -17)
 
 
 
-### cal CCE/GDP
+### cal CCE/GDP -------------------------------------------------------------------
 df_rel_c <- (loc + 0     )/GDP_c_rel
-df_not_c <- (loc + s7.not)/GDP_c_not
+df_not_c <- (loc + s7.not)/GDP_c_not ## 
 df_ner_c <- (loc + s7.dst)/GDP_c_ner
 df_dst_c <- (loc + s7.ner)/GDP_c_dst
 
-
-### normalization using the function - Func_norm_sdg_score
+### normalization using the function
 score_c1 <- Func_norm_sdg_score_bad(df_rel_c, df_not_c, df_ner_c, df_dst_c,
-                                     bottom = 0.05, top = 0.975)
+                                    bottom = 0.05, top = 0.975)
 
 
-## look at the data distribution
+
+## look at the data distribution --------------------------------------------------
 score_c1_long <- score_c1 %>% gather(year, value, 2:16)
 
 ggplot(score_c1_long, aes(x = value)) +
@@ -187,7 +149,7 @@ ggplot(score_c1_long, aes(x = value)) +
   ggtitle(indicator1)
 
 
-### save the data for side use ---------------
+### save the data for side use ---------------------------------------------------
 getwd()
 normalized_score <- score_c1
 fname <- paste0(dir.root, '/data/data_myRData/', 'normalized_score__co2_per_gdp.RData'); fname
